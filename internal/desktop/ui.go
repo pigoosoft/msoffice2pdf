@@ -4,6 +4,7 @@ import (
 	"log/slog"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"fyne.io/fyne/v2"
@@ -38,7 +39,7 @@ func runFyne(cfg *config.Config, configPath string, ring *applog.Ring, rt *appru
 	linesEntry.SetPlaceHolder(strconv.Itoa(applog.RingCapDefault))
 
 	levelSelect := widget.NewSelect([]string{"DEBUG", "INFO", "WARN", "ERROR"}, nil)
-	levelSelect.SetSelected("DEBUG")
+	levelSelect.SetSelected("INFO")
 
 	uidEntry := widget.NewEntry()
 	uidEntry.SetPlaceHolder(s.UID)
@@ -207,6 +208,10 @@ func runFyne(cfg *config.Config, configPath string, ring *applog.Ring, rt *appru
 	updateButtons()
 
 	done := make(chan struct{})
+	var closeOnce sync.Once
+	signalDone := func() {
+		closeOnce.Do(func() { close(done) })
+	}
 	go func() {
 		ticker := time.NewTicker(logRefreshInterval)
 		defer ticker.Stop()
@@ -224,18 +229,14 @@ func runFyne(cfg *config.Config, configPath string, ring *applog.Ring, rt *appru
 		go func() {
 			_ = rt.Stop()
 			fyne.Do(func() {
-				close(done)
+				signalDone()
 				w.Close()
 			})
 		}()
 	})
 
 	w.ShowAndRun()
-	select {
-	case <-done:
-	default:
-		close(done)
-	}
+	signalDone()
 	_ = rt.Stop()
 	return nil
 }
