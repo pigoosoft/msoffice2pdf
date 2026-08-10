@@ -85,14 +85,18 @@ func parseLevel(level string) slog.Level {
 
 // Init configures slog.Default. Always attaches JSON stdout.
 // When cfg.FileLoggingEnabled(), also attaches FileTextHandler to a daily file.
+// Optional extra handlers (e.g. ring buffer) are appended to the fan-out.
 // Caller must Close the returned closer on shutdown (even if nop).
-func Init(cfg config.LogConfig) (io.Closer, error) {
+func Init(cfg config.LogConfig, extra ...slog.Handler) (io.Closer, error) {
 	lv := parseLevel(cfg.Level)
 	opts := &slog.HandlerOptions{Level: lv}
 	stdout := slog.NewJSONHandler(os.Stdout, opts)
 
+	handlers := []slog.Handler{stdout}
+
 	if !cfg.FileLoggingEnabled() {
-		slog.SetDefault(slog.New(stdout))
+		handlers = append(handlers, extra...)
+		slog.SetDefault(slog.New(multiHandler(handlers)))
 		return nopCloser{}, nil
 	}
 
@@ -102,6 +106,8 @@ func Init(cfg config.LogConfig) (io.Closer, error) {
 		return nil, fmt.Errorf("applog file init: %w", err)
 	}
 	fileH := NewFileTextHandler(dw, opts)
-	slog.SetDefault(slog.New(multiHandler{stdout, fileH}))
+	handlers = append(handlers, fileH)
+	handlers = append(handlers, extra...)
+	slog.SetDefault(slog.New(multiHandler(handlers)))
 	return multiCloser{closers: []io.Closer{dw}}, nil
 }
