@@ -47,6 +47,20 @@ func (r *UploadHistoryRepo) FindByUploadID(uploadID int64) (*domain.UploadHistor
 	return &h, err
 }
 
+func (r *UploadHistoryRepo) CountByUserID(userID int64) (int64, error) {
+	var n int64
+	err := r.DB.Model(&domain.UploadHistory{}).Where("user_id = ?", userID).Count(&n).Error
+	return n, err
+}
+
+func (r *UploadHistoryRepo) CountByUserIDAndFinalStatus(userID int64, finalStatus string) (int64, error) {
+	var n int64
+	err := r.DB.Model(&domain.UploadHistory{}).
+		Where("user_id = ? AND final_status = ?", userID, finalStatus).
+		Count(&n).Error
+	return n, err
+}
+
 func (r *UploadHistoryRepo) ListByUserID(userID int64, finalStatus *string, offset, limit int) ([]domain.UploadHistory, int64, error) {
 	q := r.DB.Model(&domain.UploadHistory{}).Where("user_id = ?", userID)
 	if finalStatus != nil && *finalStatus != "" {

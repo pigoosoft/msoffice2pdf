@@ -16,6 +16,7 @@ const router = createRouter({
         { path: 'upload', component: () => import('@/views/UploadView.vue') },
         { path: 'pdfs', component: () => import('@/views/PdfsView.vue') },
         { path: 'history', component: () => import('@/views/HistoryView.vue') },
+        { path: 'profile', component: () => import('@/views/ProfileView.vue') },
         {
           path: 'admin/users',
           component: () => import('@/views/admin/UsersView.vue'),

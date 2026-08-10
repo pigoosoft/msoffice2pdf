@@ -78,7 +78,7 @@ const columns = computed<PagedColumn[]>(() => {
       width: 100,
       formatter: (row) => roleLabel(String((row as AdminUser).role || '')),
     },
-    { label: t('common.status'), width: 100, slot: 'status' },
+    { prop: 'status', label: t('common.status'), width: 100, slot: 'status' },
     { prop: 'token', label: t('common.token'), minWidth: 140, showOverflowTooltip: true },
     {
       prop: 'created_at',
@@ -86,7 +86,13 @@ const columns = computed<PagedColumn[]>(() => {
       width: 170,
       formatter: (row) => formatTime(String((row as AdminUser).created_at || '')),
     },
-    { label: t('common.actions'), minWidth: 320, fixed: 'right', slot: 'actions' },
+    {
+      label: t('common.actions'),
+      // EN labels (Set password / Reset token / Delete) need more than zh.
+      minWidth: locale.value === 'zh-CN' ? 320 : 390,
+      fixed: 'right',
+      slot: 'actions',
+    },
   ]
 })
 

@@ -54,7 +54,7 @@ const uploadColumns = computed<PagedColumn[]>(() => {
     },
     { prop: 'filename', label: t('common.filename'), minWidth: 140, showOverflowTooltip: true },
     { prop: 'fileid', label: t('common.fileid'), minWidth: 180, showOverflowTooltip: true },
-    { label: t('common.status'), width: 110, slot: 'status' },
+    { prop: 'status', label: t('common.status'), width: 110, slot: 'status' },
     { prop: 'retry_count', label: t('common.retries'), width: 70, align: 'center' },
     {
       prop: 'file_size',
@@ -89,7 +89,7 @@ const pdfColumns = computed<PagedColumn[]>(() => {
       width: 100,
       formatter: (row) => formatSize(Number((row as PdfItem).file_size) || 0),
     },
-    { label: t('common.status'), width: 110, slot: 'status' },
+    { prop: 'status', label: t('common.status'), width: 110, slot: 'status' },
     { label: t('common.actions'), minWidth: 100, fixed: 'right', slot: 'actions' },
   ]
 })

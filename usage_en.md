@@ -435,6 +435,29 @@ curl -s -X POST http://127.0.0.1:8080/api/auth/logout \
   -H "Authorization: Bearer <jwt>"
 ```
 
+#### Profile (current user)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/profile` | Account info, plaintext API token, upload count, successful conversion count |
+| PUT | `/api/profile/password` | Change own password (`old_pwd` + `new_pwd`) |
+| POST | `/api/profile/reset-token` | Regenerate own API token (response includes new plaintext `token`) |
+
+```bash
+curl -s http://127.0.0.1:8080/api/profile \
+  -H "Authorization: Bearer <jwt>"
+
+curl -s -X PUT http://127.0.0.1:8080/api/profile/password \
+  -H "Authorization: Bearer <jwt>" \
+  -H "Content-Type: application/json" \
+  -d "{\"old_pwd\":\"secret\",\"new_pwd\":\"newsecret\"}"
+
+curl -s -X POST http://127.0.0.1:8080/api/profile/reset-token \
+  -H "Authorization: Bearer <jwt>"
+```
+
+`upload_count` = live uploads in queue + non-soft-deleted `upload_history`; `convert_success_count` = rows among those with status / `final_status` = `completed`.
+
 ---
 
 ### 5.4 User management (admin)

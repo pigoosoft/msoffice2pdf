@@ -84,6 +84,11 @@ func New(d Deps) *Server {
 		TokenExpire: int(cfg.Auth.TokenExpire.Seconds()),
 	}
 	adminHandler := &handlers.AdminUserHandler{Svc: userSvc}
+	profileHandler := &handlers.ProfileHandler{
+		UserSvc:     userSvc,
+		UploadRepo:  uploadRepo,
+		HistoryRepo: historyRepo,
+	}
 	uploadHandler := &handlers.UploadHandler{Svc: uploadSvc}
 	pdfHandler := &handlers.PdfHandler{Svc: pdfSvc}
 	historyHandler := &handlers.HistoryHandler{UploadSvc: uploadSvc, PdfSvc: pdfSvc}
@@ -99,6 +104,14 @@ func New(d Deps) *Server {
 	{
 		authGroup.POST("/logout", authHandler.Logout)
 		authGroup.GET("/verify", authHandler.Verify)
+	}
+
+	profileGroup := r.Group("/api/profile")
+	profileGroup.Use(middleware.AuthRequired(cfg.Auth.JWTSecret, userRepo))
+	{
+		profileGroup.GET("", profileHandler.Get)
+		profileGroup.PUT("/password", profileHandler.ChangePassword)
+		profileGroup.POST("/reset-token", profileHandler.ResetToken)
 	}
 
 	adminGroup := r.Group("/api/admin/users")

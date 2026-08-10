@@ -36,7 +36,7 @@ const columns = computed<PagedColumn[]>(() => {
       width: 100,
       formatter: (row) => formatSize(Number((row as PdfItem).file_size) || 0),
     },
-    { label: t('common.status'), width: 110, slot: 'status' },
+    { prop: 'status', label: t('common.status'), width: 110, slot: 'status' },
     { label: t('common.actions'), minWidth: 140, fixed: 'right', slot: 'actions' },
   ]
 })

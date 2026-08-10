@@ -73,7 +73,7 @@ async function onLogout() {
       </div>
       <div class="header-right">
         <LocaleSwitcher />
-        <span class="uid">{{ auth.uid }}</span>
+        <el-button text class="uid" @click="router.push('/profile')">{{ auth.uid }}</el-button>
         <el-button text @click="onLogout">{{ t('nav.logout') }}</el-button>
       </div>
     </el-header>
@@ -90,6 +90,7 @@ async function onLogout() {
           <el-menu-item index="/upload">{{ t('nav.upload') }}</el-menu-item>
           <el-menu-item index="/pdfs">{{ t('nav.pdfs') }}</el-menu-item>
           <el-menu-item index="/history">{{ t('nav.history') }}</el-menu-item>
+          <el-menu-item index="/profile">{{ t('nav.profile') }}</el-menu-item>
           <el-sub-menu v-if="auth.isAdmin" index="admin">
             <template #title>{{ t('nav.admin') }}</template>
             <el-menu-item index="/admin/users">{{ t('nav.users') }}</el-menu-item>
@@ -120,6 +121,7 @@ async function onLogout() {
         <el-menu-item index="/upload">{{ t('nav.upload') }}</el-menu-item>
         <el-menu-item index="/pdfs">{{ t('nav.pdfs') }}</el-menu-item>
         <el-menu-item index="/history">{{ t('nav.history') }}</el-menu-item>
+        <el-menu-item index="/profile">{{ t('nav.profile') }}</el-menu-item>
         <el-sub-menu v-if="auth.isAdmin" index="admin">
           <template #title>{{ t('nav.admin') }}</template>
           <el-menu-item index="/admin/users">{{ t('nav.users') }}</el-menu-item>
@@ -157,6 +159,7 @@ async function onLogout() {
 
 .uid {
   color: var(--el-text-color-regular);
+  font-weight: 500;
 }
 
 .app-body {

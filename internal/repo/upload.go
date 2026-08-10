@@ -26,6 +26,18 @@ func (r *UploadRepo) FindByFileID(fileid string) (*domain.Upload, error) {
 	return &u, err
 }
 
+func (r *UploadRepo) CountByUserID(userID int64) (int64, error) {
+	var n int64
+	err := r.DB.Model(&domain.Upload{}).Where("user_id = ?", userID).Count(&n).Error
+	return n, err
+}
+
+func (r *UploadRepo) CountByUserIDAndStatus(userID int64, status string) (int64, error) {
+	var n int64
+	err := r.DB.Model(&domain.Upload{}).Where("user_id = ? AND status = ?", userID, status).Count(&n).Error
+	return n, err
+}
+
 func (r *UploadRepo) ListByUserID(userID int64, status *string, offset, limit int) ([]domain.Upload, int64, error) {
 	q := r.DB.Model(&domain.Upload{}).Where("user_id = ?", userID)
 	if status != nil && *status != "" {

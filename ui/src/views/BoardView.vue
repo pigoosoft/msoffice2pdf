@@ -164,6 +164,7 @@ onUnmounted(() => {
       ref="tableRef"
       :data="rows"
       v-loading="loading"
+      border
       stripe
       :empty-text="t('board.empty')"
       class="board-table"
@@ -172,25 +173,27 @@ onUnmounted(() => {
         prop="filename"
         :label="t('common.filename')"
         min-width="160"
+        sortable
         show-overflow-tooltip
       />
       <el-table-column
         prop="fileid"
         :label="t('common.fileid')"
         min-width="180"
+        sortable
         show-overflow-tooltip
       />
-      <el-table-column :label="t('common.status')" width="120">
+      <el-table-column prop="status" :label="t('common.status')" width="120" sortable>
         <template #default="{ row }">
           <StatusTag :status="row.status" />
         </template>
       </el-table-column>
-      <el-table-column :label="t('common.retries')" width="80" align="center">
+      <el-table-column prop="retry_count" :label="t('common.retries')" width="80" align="center" sortable>
         <template #default="{ row }">
           {{ row.retry_count ?? 0 }}
         </template>
       </el-table-column>
-      <el-table-column :width="actionsOpen ? 160 : 72" fixed="right">
+      <el-table-column :width="actionsOpen ? 160 : 72" fixed="right" :resizable="false">
         <template #header>
           <ActionsColToggle :open="actionsOpen" :label="t('common.actions')" @toggle="toggleActions" />
         </template>

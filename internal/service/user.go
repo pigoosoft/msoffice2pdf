@@ -72,6 +72,25 @@ func (s *UserService) CreateUser(uid, pwd string, role int8) (string, *domain.Us
 	return apiToken, user, nil
 }
 
+// ChangePassword verifies oldPwd then sets a new password for uid.
+func (s *UserService) ChangePassword(uid, oldPwd, newPwd string) error {
+	user, err := s.Repo.FindByUID(uid)
+	if err != nil {
+		return err
+	}
+	if user == nil {
+		return ErrNotFound
+	}
+	if user.PwdHash != auth.MD5Hash(oldPwd) {
+		return ErrUnauthorized
+	}
+	if strings.TrimSpace(newPwd) == "" {
+		return ErrInvalidInput
+	}
+	user.PwdHash = auth.MD5Hash(newPwd)
+	return s.Repo.Update(user)
+}
+
 func (s *UserService) UpdateUser(uid string, pwd *string, role *int8) (*domain.User, error) {
 	user, err := s.Repo.FindByUID(uid)
 	if err != nil {

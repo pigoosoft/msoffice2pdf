@@ -1,12 +1,42 @@
 # MSOffice2Pdf
 
-Convert Microsoft Office documents to PDF via Office（WPS) COM (Windows). HTTP API + optional Web UI.
+Convert Microsoft Office documents to PDF via HTTP API + optional Web UI.
+
+- **Windows**: Microsoft Office / WPS via COM for high-fidelity conversion.
+- **Linux**: configure **LibreOffice** or **Apache OpenOffice** (`soffice` CLI, engine `openoffice`) for PDF conversion.
+
+One service instance supports **multi-user**, **multi-task**, and **multi-thread** conversion (channel queue + configurable Worker Pool), with **unified management** of users, uploads, PDFs, history, and cleanup through the same Web UI / REST API / database.
 
 ## Requirements
 
 - Go 1.21+
 - MySQL 8.0+ or PostgreSQL 14+
-- Windows + Microsoft Office 2016+ (for conversion; not required for P1 skeleton)
+- **Windows** + Microsoft Office 2016+ (or WPS) for COM engines (`msoffice` / `wpsoffice`)
+- **Linux** (or macOS): LibreOffice / Apache OpenOffice installed; enable engine `openoffice` in `config.yaml` (real CLI conversion; no Microsoft Office COM)
+
+### Linux: LibreOffice / OpenOffice
+
+Install LibreOffice (or Apache OpenOffice), then in `config/config.yaml` enable only the `openoffice` engine and map extensions to it. Each task uses an isolated profile under `user_profile/{uuid}/` so **multiple workers can convert in parallel** without interfering:
+
+```yaml
+converter:
+  worker_count: 4          # multi-thread / multi-task workers
+  queue_size: 64
+  engines:
+    - openoffice
+  ext_engines:
+    "*.doc": openoffice
+    "*.docx": openoffice
+    "*.xls": openoffice
+    "*.xlsx": openoffice
+    "*.ppt": openoffice
+    "*.pptx": openoffice
+  openoffice:
+    command: "/usr/bin/soffice"   # or soffice on PATH
+    user_profile: "/var/lib/msoffice2pdf/lo-profile"
+```
+
+Do not list `msoffice` / `wpsoffice` on Linux (startup will exit). Users, tasks, and PDFs are still managed in one place via Web UI / API / DB.
 
 ## Quick start (P1 skeleton)
 
@@ -47,6 +77,80 @@ Then set `database.dsn` in `config/config.yaml`, e.g.:
 docker run -d --name msoffice2pdf-mysql -e MYSQL_ROOT_PASSWORD=root -e MYSQL_DATABASE=msoffice2pdf -p 3306:3306 mysql:8
 # dsn: root:root@tcp(127.0.0.1:3306)/msoffice2pdf?charset=utf8mb4&parseTime=True&loc=Local
 ```
+
+## Web UI
+
+Standalone Vite + Vue 3 app in `ui/`, calling the backend via same-origin `/api`. Dev uses the Vite proxy; production serves `ui/dist/` (e.g. Nginx) and reverse-proxies the API.
+
+### Screenshots
+
+![Login](screenshots/ui1.png) ![Conversion board](screenshots/ui2.png) ![My PDFs](screenshots/ui3.png)
+
+### Prerequisites
+
+1. Backend running (default `http://127.0.0.1:8080`)
+2. A login user created via CLI (e.g. `user create-admin`)
+
+### Dev start
+
+```bash
+# Terminal 1: backend
+./bin/msoffice2pdf.exe serve --config=config/config.yaml
+
+# Terminal 2: frontend
+cd ui
+npm install
+npm run dev
+```
+
+Open the URL Vite prints (default `http://127.0.0.1:5173`). `ui/vite.config.ts` proxies `/api` and `/health` to `http://127.0.0.1:8080`. Cookie sessions need same-origin proxy; do not point the API at a cross-origin host. Login uses an HttpOnly cookie; do not rely on `X-UID` / `X-Token` in the browser.
+
+### Production build
+
+```bash
+cd ui
+npm run build
+```
+
+Output is in `ui/dist/`. Nginx example — set site `root` to that directory and reverse-proxy `/api` (and optionally `/health`) to the backend:
+
+```nginx
+server {
+  listen 80;
+  server_name example.com;
+  root /path/to/msoffice2pdf/ui/dist;
+  index index.html;
+
+  location /api/ {
+    proxy_pass http://127.0.0.1:8080;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+  }
+
+  location /health {
+    proxy_pass http://127.0.0.1:8080;
+  }
+
+  location / {
+    try_files $uri $uri/ /index.html;
+  }
+}
+```
+
+### Usage
+
+1. Open the login page; sign in with `uid` + `pwd` (same as CLI create)
+2. After login you land on the conversion board (`/board`). Sidebar:
+   - **Upload** (`/upload`) — pick/drag Office files and submit conversion
+   - **Conversion board** (`/board`) — in-progress jobs
+   - **My PDFs** (`/pdfs`) — browse/download generated PDFs
+   - **History** (`/history`) — archived uploads and action history
+   - **Profile** (`/profile`) — change password, view/regenerate API token, usage stats
+3. **Admin** (`role=admin`) also sees:
+   - **Users** (`/admin/users`)
+   - **Overview** (`/admin/overview`)
+4. UI language: EN / 中文 switcher (top right)
 
 ## Authentication (P2)
 

@@ -15,6 +15,8 @@ export interface PagedColumn {
   showOverflowTooltip?: boolean
   fixed?: boolean | 'left' | 'right'
   align?: 'left' | 'center' | 'right'
+  /** false disables; default true when prop is set. Client-side sort of current page. */
+  sortable?: boolean | 'custom'
 }
 
 export interface PagedResult {
@@ -74,6 +76,17 @@ function actionsColWidth(col: PagedColumn): number {
 function colFixed(col: PagedColumn): boolean | 'left' | 'right' | undefined {
   if (isActionsSlot(col.slot)) return 'right'
   return col.fixed
+}
+
+function colSortable(col: PagedColumn): boolean | 'custom' {
+  if (isActionsSlot(col.slot)) return false
+  if (col.sortable === false) return false
+  if (col.sortable === true || col.sortable === 'custom') return col.sortable
+  return !!col.prop
+}
+
+function colResizable(col: PagedColumn): boolean {
+  return !isActionsSlot(col.slot)
 }
 
 function relayout() {
@@ -139,6 +152,7 @@ defineExpose({ refresh, load })
       ref="tableRef"
       :data="rows"
       v-loading="loading"
+      border
       stripe
       :empty-text="resolvedEmpty"
       class="table"
@@ -152,6 +166,8 @@ defineExpose({ refresh, load })
         :min-width="isActionsSlot(col.slot) ? undefined : col.minWidth"
         :fixed="colFixed(col)"
         :align="col.align"
+        :sortable="colSortable(col)"
+        :resizable="colResizable(col)"
         :show-overflow-tooltip="col.showOverflowTooltip"
       >
         <template v-if="isActionsSlot(col.slot)" #header>

@@ -41,7 +41,7 @@ const uploadColumns = computed<PagedColumn[]>(() => {
   return [
     { prop: 'fileid', label: t('common.fileid'), minWidth: 180, showOverflowTooltip: true },
     { prop: 'filename', label: t('common.filename'), minWidth: 140, showOverflowTooltip: true },
-    { label: t('history.finalStatus'), width: 100, slot: 'final_status' },
+    { prop: 'final_status', label: t('history.finalStatus'), width: 100, slot: 'final_status' },
     { prop: 'error_code', label: t('history.errorCode'), width: 160, showOverflowTooltip: true },
     { prop: 'error_msg', label: t('history.errorMsg'), minWidth: 140, showOverflowTooltip: true },
     { prop: 'retry_count', label: t('common.retries'), width: 70, align: 'center' },
@@ -69,7 +69,7 @@ const uploadColumns = computed<PagedColumn[]>(() => {
 const pdflogColumns = computed<PagedColumn[]>(() => {
   void locale.value
   return [
-    { label: t('history.action'), width: 90, slot: 'action' },
+    { prop: 'action', label: t('history.action'), width: 90, slot: 'action' },
     { prop: 'fileid', label: t('common.fileid'), minWidth: 180, showOverflowTooltip: true },
     { prop: 'detail', label: t('history.detail'), minWidth: 160, showOverflowTooltip: true },
     { prop: 'ip_address', label: 'IP', width: 130, showOverflowTooltip: true },
