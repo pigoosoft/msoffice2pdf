@@ -10,16 +10,9 @@ import (
 	"syscall"
 
 	"msoffice2pdf/internal/applog"
+	"msoffice2pdf/internal/appruntime"
 	"msoffice2pdf/internal/config"
-	"msoffice2pdf/internal/converter"
-	"msoffice2pdf/internal/db"
-	"msoffice2pdf/internal/queue"
-	"msoffice2pdf/internal/repo"
-	"msoffice2pdf/internal/server"
-	"msoffice2pdf/internal/service"
-	"msoffice2pdf/internal/storage"
 	"msoffice2pdf/internal/version"
-	"msoffice2pdf/internal/watermark"
 )
 
 func main() {
@@ -82,93 +75,20 @@ func runServe(configPath string) {
 	}
 	defer func() { _ = logCloser.Close() }()
 
-	convOpts := converter.Options{
-		ExcelPageFit:          cfg.Converter.ExcelPageFit,
-		ComMode:               cfg.Converter.ComMode,
-		TempSandbox:           cfg.Converter.TempSandboxEnabled(),
-		Engines:               cfg.Converter.Engines,
-		ExtEngines:            cfg.Converter.ExtEngines,
-		ExtAppKinds:           converter.ExtAppKindsFromUpload(cfg.Upload.AppKind, extKeys(cfg.Converter.ExtEngines)),
-		OpenOfficeCommand:     cfg.Converter.OpenOffice.Command,
-		OpenOfficeUserProfile: cfg.Converter.OpenOffice.UserProfile,
-	}
-	if err := converter.ValidateEnvironment(convOpts); err != nil {
-		slog.Error("converter environment validation failed", "err", err, "engines", cfg.Converter.Engines)
-		os.Exit(1)
-	}
-	converter.LogUnmappedAllowedExts(cfg.Upload.AllowedExts, cfg.Converter.ExtEngines)
-
-	gdb, err := db.Open(cfg.Database)
-	if err != nil {
-		slog.Error("database init failed", "err", err)
-		os.Exit(1)
-	}
-
-	if err := storage.EnsureDirs(cfg.Storage); err != nil {
-		slog.Error("ensure storage dirs failed", "err", err)
+	rt := appruntime.New(cfg)
+	if err := rt.Start(); err != nil {
+		slog.Error("runtime start failed", "err", err)
 		os.Exit(1)
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+	<-ctx.Done()
 
-	userRepo := &repo.UserRepo{DB: gdb}
-	uploadRepo := &repo.UploadRepo{DB: gdb}
-	pdfRepo := &repo.PdfRepo{DB: gdb}
-	pdfLogRepo := &repo.PdfLogRepo{DB: gdb}
-	historyRepo := &repo.UploadHistoryRepo{DB: gdb}
-	expiredRepo := &repo.ExpiredUploadRepo{DB: gdb}
-
-	cleanup := &service.CleanupService{
-		DB:          gdb,
-		Cfg:         cfg.Cleanup,
-		Storage:     cfg.Storage,
-		UploadRepo:  uploadRepo,
-		HistoryRepo: historyRepo,
-		PdfRepo:     pdfRepo,
-		PdfLogRepo:  pdfLogRepo,
-		UserRepo:    userRepo,
-	}
-
-	service.MigrateUploadHistoryOnce(cleanup, expiredRepo, cfg.Converter.RetryCount)
-	service.MigrateUnifyFileIDOnce(pdfRepo, pdfLogRepo, uploadRepo, historyRepo)
-
-	q := queue.New(
-		cfg.Converter,
-		cfg.Watermark,
-		uploadRepo, pdfRepo, pdfLogRepo, userRepo,
-		cfg.Storage,
-		converter.New(convOpts),
-		watermark.Service{},
-		cleanup,
-	)
-	q.Start()
-	cleanup.Start()
-
-	defer func() {
-		cleanup.Stop()
-		q.Stop()
-	}()
-
-	srv := server.New(server.Deps{
-		DB:          gdb,
-		Cfg:         cfg,
-		Queue:       q,
-		Cleanup:     cleanup,
-		HistoryRepo: historyRepo,
-	})
-	if err := srv.Run(ctx); err != nil {
-		slog.Error("server stopped with error", "err", err)
+	if err := rt.Stop(); err != nil {
+		slog.Error("runtime stop failed", "err", err)
 		os.Exit(1)
 	}
-}
-
-func extKeys(m map[string]string) []string {
-	out := make([]string, 0, len(m))
-	for k := range m {
-		out = append(out, k)
-	}
-	return out
 }
 
 func parseGlobalConfig(args []string) (configPath string, remaining []string) {

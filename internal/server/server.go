@@ -177,23 +177,38 @@ func New(d Deps) *Server {
 	}
 }
 
-func (s *Server) Run(ctx context.Context) error {
+// ListenAndServeBackground starts the HTTP server in a goroutine and returns a
+// channel that receives a listen error (or is closed on clean shutdown).
+func (s *Server) ListenAndServeBackground() <-chan error {
 	errCh := make(chan error, 1)
 	go func() {
 		slog.Info("http server listening", "addr", s.http.Addr)
 		logLocalListenURLs(s.cfg.Server.Port)
 		if err := s.http.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			errCh <- err
+			return
 		}
+		close(errCh)
 	}()
+	return errCh
+}
 
+func (s *Server) Shutdown(ctx context.Context) error {
+	slog.Info("shutting down http server")
+	return s.http.Shutdown(ctx)
+}
+
+func (s *Server) Run(ctx context.Context) error {
+	errCh := s.ListenAndServeBackground()
 	select {
 	case <-ctx.Done():
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		slog.Info("shutting down http server")
-		return s.http.Shutdown(shutdownCtx)
-	case err := <-errCh:
+		return s.Shutdown(shutdownCtx)
+	case err, ok := <-errCh:
+		if !ok {
+			return nil
+		}
 		return err
 	}
 }
