@@ -1,0 +1,28 @@
+# Build artifacts
+/msoffice2pdf
+/bin/
+*.exe
+
+# Frontend dependencies
+ui/node_modules/
+
+# Runtime / local data directories
+docs/
+expired/
+output/
+upload/
+tmp/
+logs/
+testdata/
+trash/
+归档的设计文档/
+# Project / editor local
+.cursorrules
+
+# Dotfiles and directories (keep .gitignore tracked)
+.*
+!.gitignore
+
+# Misc
+*.log
+.env

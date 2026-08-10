@@ -1,0 +1,383 @@
+# =============================================================================
+# MSOffice2Pdf — annotated config template (config.template_en.yaml)
+# =============================================================================
+#
+# Purpose:
+#   - Document every config key (type, meaning, constraints, examples, env vars)
+#   - Safe skeleton for new environments (placeholder values, not real secrets)
+#
+# Usage:
+#   cp config/config.template_en.yaml config/config.yaml
+#   # Then set database.dsn, auth.jwt_secret, etc. for your environment
+#   ./bin/msoffice2pdf --config config/config.yaml
+#
+# Chinese comments: config/config.template_zh.yaml (same keys)
+#
+# Relation to config.yaml:
+#   - Runtime loads only the file you pass (usually config/config.yaml)
+#   - This file is docs + template; put local/prod secrets in config.yaml or env vars
+#   - [REQUIRED SYNC] When adding/removing/renaming any key in config.yaml, update
+#     both config.template_en.yaml and config.template_zh.yaml (keys + comments).
+#     Values may differ; key set and docs must stay in sync.
+#
+# Environment variable overrides (take precedence over YAML at startup):
+#   MSOFFICE2PDF_DB_DSN      → database.dsn
+#   MSOFFICE2PDF_JWT_SECRET  → auth.jwt_secret
+#
+# Duration format: Go time.Duration strings, e.g. 30s, 5m, 1h, 24h, 168h
+# Size format: upload.max_size accepts 100MB / 1GB / 1024KB, or a raw byte integer
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# server — HTTP listen and timeouts
+# -----------------------------------------------------------------------------
+server:
+  # Listen port. Type: int. Constraint: must be > 0. Example: 8080
+  # Binds :{port}; health checks and APIs are served on this port.
+  port: 8080
+
+  # HTTP read timeout (time to finish reading request headers + body). Type: Duration. Example: 30s
+  # Includes upload body reads; large uploads need upload.max_size and client timeouts considered together.
+  # Validate() does not currently require > 0, but a positive value is recommended.
+  read_timeout: 30s
+
+  # HTTP write timeout (time to finish writing the response). Type: Duration. Example: 60s
+  # Leave headroom for large PDF downloads; conversion runs in Workers and does not use this timeout.
+  # Validate() does not currently require > 0, but a positive value is recommended.
+  write_timeout: 60s
+
+# -----------------------------------------------------------------------------
+# database — database connection (GORM)
+# -----------------------------------------------------------------------------
+database:
+  # Driver name. Type: string. Constraint: mysql or postgres only (startup validation).
+  # mysql: go-sql-driver / gorm mysql dialector
+  # postgres: pgx/postgres dialector
+  driver: mysql
+
+  # Data source name (DSN). Type: string. Constraint: non-empty (startup validation).
+  # Overridden by env MSOFFICE2PDF_DB_DSN (recommended for production).
+  #
+  # MySQL example:
+  #   user:password@tcp(127.0.0.1:3306)/msoffice2pdf?charset=utf8mb4&parseTime=True&loc=Local
+  # PostgreSQL example (driver: postgres):
+  #   host=127.0.0.1 user=app password=secret dbname=msoffice2pdf port=5432 sslmode=disable
+  #
+  # Do not commit real passwords into the template or public repos; placeholders only.
+  dsn: "user:password@tcp(127.0.0.1:3306)/msoffice2pdf?charset=utf8mb4&parseTime=True&loc=Local"
+
+# -----------------------------------------------------------------------------
+# storage — local directories (relative paths are vs process CWD; absolute paths OK)
+# Layout convention:
+#   upload/{uid}/{fileid}_{filename}
+#   output/{uid}/{upload.fileid}.pdf
+#   trash/{uid}/...
+#   expired/{uid}/...
+# -----------------------------------------------------------------------------
+storage:
+  # Original Office upload directory. Type: string. Constraint: non-empty.
+  upload_dir: "./upload"
+
+  # PDF output directory after successful conversion. Type: string. Constraint: non-empty.
+  output_dir: "./output"
+
+  # Staging directory after user delete (soft-delete counterpart). Type: string. Constraint: non-empty.
+  trash_dir: "./trash"
+
+  # Archive directory for expired uploads (when cleanup is enabled). Type: string. Constraint: non-empty.
+  expired_dir: "./expired"
+
+# -----------------------------------------------------------------------------
+# converter — in-memory conversion queue and Office COM / stub
+# -----------------------------------------------------------------------------
+converter:
+  # Worker concurrency. Type: int. Constraint: must be > 0.
+  # Suggest ~CPU×2; too high increases Office COM contention. Example: 4
+  worker_count: 4
+
+  # In-memory channel capacity. Type: int. Constraint: must be > 0.
+  # When full, upload still succeeds; upload.status stays pending until requeue scan enqueues it.
+  queue_size: 100
+
+  # Per-conversion timeout. Type: Duration. Constraint: must be > 0.
+  # On timeout the task is marked failed and related Office processes for the task are terminated.
+  office_timeout: 300s
+
+  # Interval to requeue pending|queued|converting from DB. Type: Duration. Constraint: must be > 0.
+  # Also runs once at startup; tries TryEnqueue in ascending upload.id order.
+  # Same cycle kills overdue convert-worker processes and SweepTempSandboxes
+  # (msoffice2pdf-com-* older than office_timeout+2m by mtime).
+  requeue_interval: 30s
+
+  # Excel→PDF page fit. Type: string. Allowed: fit_width | auto. Default/empty = fit_width.
+  # fit_width: before export, set each Worksheet Zoom=false, FitToPagesWide=1, FitToPagesTall=false
+  #            (one page wide; height may paginate). PageSetup failures are WARN only; sheet keeps prior settings.
+  # auto: do not change PageSetup; use the workbook's existing page setup.
+  excel_page_fit: fit_width
+
+  # COM conversion process mode. Type: string. Allowed: subprocess | inprocess. Default/empty = subprocess.
+  # subprocess: each task execs this binary as convert-worker for Office COM; native COM crashes do not take down the main service.
+  # inprocess: go-ole inside the worker process (legacy); a COM AV can exit the whole process — debug only.
+  com_mode: subprocess
+
+  # TEMP sandbox: per task create msoffice2pdf-com-<id>/ under the system temp dir and set TEMP/TMP/TMPDIR
+  # so Office temps and ~$ lock files land in the sandbox (source file is not copied into TEMP before open).
+  # Type: bool. Default/nil = true. Injected via cmd.Env for subprocess; convert-worker inherits it.
+  # With com_mode=inprocess, worker_count must be 1 when enabled (startup validation).
+  temp_sandbox: true
+
+  # Extra retries after a conversion failure. Type: int. Constraint: >= 0.
+  # Meaning: retries after the first failure. Example: 2 ⇒ up to 1+2=3 attempts; 0 ⇒ archive on first failure.
+  # Over-limit error code: ERR_RETRY_LIMIT_EXCEEDED (written to upload_history).
+  retry_count: 2
+
+  # Minimum wait before re-enqueue after failure. Type: Duration. Constraint: must be > 0.
+  # Independent of requeue_interval (which only covers pending|queued|converting).
+  retry_interval: 30s
+
+  # Enabled conversion engine names in this process. Type: string[].
+  # Constraints: missing/null key normalizes to [msoffice]; explicit [] is illegal; unique elements;
+  # current legal names: msoffice | wpsoffice | openoffice.
+  # At startup: COM engines (msoffice / wpsoffice) probe ProgIDs (Writer/Spreadsheet/Presentation) per listed name —
+  # any failure ERROR and exit; openoffice probes command --version. Do not list wpsoffice if WPS is not installed.
+  engines:
+    - msoffice
+    # - wpsoffice
+    # - openoffice
+
+  # openoffice — LibreOffice / Apache OpenOffice CLI (required when engines includes openoffice)
+  # openoffice:
+  #   command: "C:/Program Files/LibreOffice/program/soffice.exe"  # or soffice on PATH
+  #   user_profile: "C:/data/msoffice2pdf/lo-profile"            # per-task subdir {user_profile}/{uuid}/
+
+  # Extension → engine name. Type: map[string]string. No auto; values must appear in converter.engines.
+  # Keys match upload.allowed_exts forms (*.docx / .docx / docx); normalized to bare ext like docx after validate.
+  # Missing mapping for an allowed_exts entry: ERROR log at startup (no exit); upload rejected
+  # (HTTP 400 / 40004 / ERR_EXT_ENGINE_UNMAPPED).
+  # With wpsoffice enabled, add *.wps / *.wpt / *.et / *.ett / *.dps / *.dpt → wpsoffice
+  # (and matching stream names under upload.validate_ole; see upload section).
+  ext_engines:
+    "*.doc": msoffice
+    "*.docx": msoffice
+    "*.dot": msoffice
+    "*.dotx": msoffice
+    "*.dotm": msoffice
+    "*.xls": msoffice
+    "*.xlsx": msoffice
+    "*.xlsm": msoffice
+    "*.xlt": msoffice
+    "*.xltx": msoffice
+    "*.xltm": msoffice
+    "*.ppt": msoffice
+    "*.pptx": msoffice
+    "*.pptm": msoffice
+    "*.pot": msoffice
+    "*.potx": msoffice
+    "*.potm": msoffice
+    # "*.wps": wpsoffice
+    # "*.wpt": wpsoffice
+    # "*.et": wpsoffice
+    # "*.ett": wpsoffice
+    # "*.dps": wpsoffice
+    # "*.dpt": wpsoffice
+
+# -----------------------------------------------------------------------------
+# cleanup — background TTL cleanup (P5: upload / PDF; no trash TTL)
+# -----------------------------------------------------------------------------
+cleanup:
+  # [DEPRECATED] Upload TTL: terminal uploads are archived immediately via ArchiveUpload;
+  # key kept for old configs only; cleanup logic ignores it.
+  # Type: Duration. May be commented or omitted. Example: 24h
+  # upload_ttl: 24h
+
+  # Enable row-level TTL cleanup for upload_history. false: rely on disk archives only; do not delete history rows.
+  # Type: bool. Example: false
+  history_ttl_enabled: false
+
+  # Retention for upload_history: records whose archived_at exceeds this age participate in TTL cleanup
+  # (delete disk files; optionally delete table rows).
+  # Type: Duration. Constraint: must be > 0 when history_ttl_enabled=true. Example: 24h
+  history_ttl: 24h
+
+  # Whether TTL cleanup physically deletes upload_history rows. false: delete files under expired/ only and keep rows (audit).
+  # Type: bool. Example: false
+  history_ttl_delete_row: false
+
+  # PDF retention: status completed|failed with created_at older than this → delete output file, mark expired, write pdflog.
+  # Type: Duration. Constraint: must be > 0. Example: 24h
+  pdf_ttl: 24h
+
+  # Cleanup scan interval; runs once immediately at startup. Type: Duration. Constraint: must be > 0. Example: 1h
+  interval: 1h
+
+# -----------------------------------------------------------------------------
+# auth — Web JWT and related secrets
+# Note: long-lived API tokens (X-UID + X-Token) live in the user table and are not
+#       controlled by token_expire; token_expire applies to short-lived login JWTs.
+# -----------------------------------------------------------------------------
+auth:
+  # JWT signing secret. Type: string. Constraint: non-empty (startup validation).
+  # Overridden by env MSOFFICE2PDF_JWT_SECRET.
+  # Production must use a long random string; do not commit real secrets.
+  jwt_secret: "change-me-in-production"
+
+  # Web login JWT lifetime. Type: Duration. Example: 48h
+  # Distinct from the architecture doc's "long-lived Token"; API tokens are managed separately.
+  token_expire: 48h
+
+# -----------------------------------------------------------------------------
+# log — process logging
+# -----------------------------------------------------------------------------
+log:
+  # Log level. Type: string. Common: debug / info / warn / error (as implemented by the parser).
+  # Never log passwords, tokens, or full JWTs.
+  level: info
+
+  # Log output target. Type: string. Current implementation is mainly stdout JSON; file toggle is file_enabled.
+  # Example: stdout
+  output: stdout
+
+  # Also write logs to daily files. Type: bool. Default/nil = false.
+  # When true, writes {file_dir}/yyyymmdd.log; creates the dir at startup; open failure aborts startup.
+  file_enabled: false
+
+  # File log directory. Type: string. Relative to CWD or absolute. Required when file_enabled=true.
+  # Example: logs
+  file_dir: logs
+
+  # Periodic forced flush for buffered file logs. Type: duration string (e.g. 5s). Ignored when file_enabled=false.
+  # <=0: no periodic flush; still Sync on process Close. Example: 5s
+  flush_interval: 5s
+
+# -----------------------------------------------------------------------------
+# upload — upload limits
+# -----------------------------------------------------------------------------
+upload:
+  # Max single-file size. Type: string, parsed to bytes at startup.
+  # Format: positive integer + optional unit KB/MB/GB (case-insensitive), or raw byte count.
+  # Constraint: parsed value must be > 0. Example: 100MB
+  max_size: 100MB
+
+  # Enable magic-byte checks (file header only: OLE D0 CF… or ZIP PK; must match extension family).
+  # Type: bool. Default/nil = true. Deeper ZIP/OLE checks: validate_new / validate_ole.
+  # OOXML vs OLE family is determined by which validate_* map owns the extension (no hard-coded lists in code).
+  validate_magic: true
+
+  # OOXML extension → required paths inside the zip. Type: map[string][]string.
+  # Extensions in validate_new are checked as OOXML (ZIP); those in validate_ole as OLE.
+  # An extension must not appear in both; if in neither, structural checks are skipped (magic still applies when family is known).
+  validate_new:
+    "*.docx":
+      - "word/document.xml"
+    "*.dotx":
+      - "word/document.xml"
+    "*.dotm":
+      - "word/document.xml"
+    "*.xlsx":
+      - "xl/workbook.xml"
+    "*.xltx":
+      - "xl/workbook.xml"
+    "*.xltm":
+      - "xl/workbook.xml"
+    "*.xlsm":
+      - "xl/workbook.xml"
+    "*.pptx":
+      - "ppt/presentation.xml"
+    "*.pptm":
+      - "ppt/presentation.xml"
+    "*.potx":
+      - "ppt/presentation.xml"
+    "*.potm":
+      - "ppt/presentation.xml"
+
+  # OLE extension → required stream names in the compound document. Type: map[string][]string.
+  # Mutually exclusive with validate_new for the same extension.
+  # Native WPS .wps/.wpt/.et/.ett/.dps/.dpt are OLE/CFB; stream names match the corresponding MS binary formats.
+  validate_ole:
+    "*.doc":
+      - "WordDocument"
+    "*.dot":
+      - "WordDocument"
+    "*.xls":
+      - "Workbook"
+    "*.xlt":
+      - "Workbook"
+    "*.ppt":
+      - "PowerPoint Document"
+    "*.pot":
+      - "PowerPoint Document"
+    "*.wps":
+      - "WordDocument"
+    "*.wpt":
+      - "WordDocument"
+    "*.et":
+      - "Workbook"
+    "*.ett":
+      - "Workbook"
+    "*.dps":
+      - "PowerPoint Document"
+    "*.dpt":
+      - "PowerPoint Document"
+
+  # Allowed extension patterns. Type: string array. Constraint: must not be empty.
+  # Forms "*.docx", ".docx", "docx" are accepted; matching is case-insensitive.
+  # Restrict to Office document types; do not widen to arbitrary files.
+  allowed_exts:
+    - "*.doc"
+    - "*.docx"
+    - "*.dotx"
+    - "*.dotm"
+    - "*.dot"
+    - "*.xls"
+    - "*.xlsx"
+    - "*.xlsm"
+    - "*.xlt"
+    - "*.xltx"
+    - "*.xltm"
+    - "*.ppt"
+    - "*.pptx"
+    - "*.pptm"
+    - "*.potx"
+    - "*.potm"
+    - "*.pot"
+    - "*.wps"
+    - "*.wpt"
+    - "*.et"
+    - "*.ett"
+    - "*.dps"
+    - "*.dpt"
+
+# -----------------------------------------------------------------------------
+# watermark — post-export text watermark on PDF (after successful COM export)
+# -----------------------------------------------------------------------------
+# Enabled when text is non-empty, or the upload form watermark (secondary) is non-empty.
+# Primary + secondary: each unit is two lines (primary above, secondary below at ~70% font size).
+# Secondary only: one secondary line. Both empty: no watermark.
+# Note: YAML numeric defaults are 0; always set opacity explicitly (e.g. 0.25); omitting the section yields opacity 0.
+watermark:
+  # Primary watermark text. Type: string. Empty and no upload secondary → no watermark.
+  text: ""
+
+  # Angle in degrees. Type: float. Negative values typically tilt upper-left → lower-right. Example: -45
+  angle: -45
+
+  # Tile density. Type: string. Allowed: light | medium | heavy. Default/empty = medium.
+  # light is sparsest; heavy is densest among the three (spacing by text size; staggered multi-row lattice).
+  # Ignored when density_count is 1..19.
+  density: medium
+
+  # Watermark count per page. Type: int. 0 = use density; 1..19 = fixed count (staggered) and ignore density.
+  density_count: 0
+
+  # Opacity. Type: float. Constraint: [0, 1]. 1=opaque, 0=fully transparent. Must be set explicitly.
+  opacity: 0.25
+
+  # Color. Type: string. Format: #RRGGBB. Default/empty = #808080.
+  color: "#808080"
+
+  # Primary font size (pt). Type: float. Constraint: >= 0. 0/default = auto from page width; secondary ≈ primary×0.7.
+  font_size: 0
+
+  # Font file path (TTF/OTF). Type: string. Empty tries system CJK fonts (e.g. Microsoft YaHei).
+  # If only TTC is available and load fails, set an explicit usable .ttf.
+  font_path: ""

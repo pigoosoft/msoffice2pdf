@@ -1,0 +1,161 @@
+﻿server:
+  port: 8080
+  read_timeout: 30s
+  write_timeout: 60s
+
+database:
+  driver: mysql  # mysql or postgres
+  dsn: "root:123456@tcp(127.0.0.1:3306)/msoffice2pdf?charset=utf8mb4&parseTime=True&loc=Local"
+
+storage:
+  upload_dir: "./upload"
+  output_dir: "./output"
+  trash_dir: "./trash"
+  expired_dir: "./expired"
+
+converter:
+  worker_count: 4
+  queue_size: 100
+  office_timeout: 300s
+  requeue_interval: 30s
+  excel_page_fit: fit_width
+  com_mode: subprocess
+  temp_sandbox: true
+  retry_count: 2
+  retry_interval: 30s
+  engines:
+    - msoffice
+    - wpsoffice
+  # openoffice:
+  #   command: "C:/Program Files/LibreOffice/program/soffice.exe"
+  #   user_profile: "C:/data/msoffice2pdf/lo-profile"
+  ext_engines:
+    "*.doc": msoffice
+    "*.docx": msoffice
+    "*.dot": msoffice
+    "*.dotx": msoffice
+    "*.dotm": msoffice
+    "*.xls": msoffice
+    "*.xlsx": msoffice
+    "*.xlsm": msoffice
+    "*.xlt": msoffice
+    "*.xltx": msoffice
+    "*.xltm": msoffice
+    "*.ppt": msoffice
+    "*.pptx": msoffice
+    "*.pptm": msoffice
+    "*.pot": msoffice
+    "*.potx": msoffice
+    "*.potm": msoffice
+    "*.wps": msoffice 
+    "*.wpt": msoffice 
+    "*.et": msoffice
+    "*.ett": msoffice
+    "*.dps": msoffice
+    "*.dpt": msoffice 
+
+cleanup:
+  # upload_ttl: 24h   # deprecated, ignored
+  history_ttl_enabled: false
+  history_ttl: 24h
+  history_ttl_delete_row: false
+  pdf_ttl: 24h
+  interval: 1h
+
+auth:
+  jwt_secret: "change-me-in-production"
+  token_expire: 48h
+
+log:
+  level: info
+  output: stdout
+  file_enabled: true
+  file_dir: logs
+  flush_interval: 5s
+
+upload:
+  max_size: 100MB
+  validate_magic: true
+  validate_new:
+    "*.docx":
+      - "word/document.xml"
+    "*.dotx":
+      - "word/document.xml"
+    "*.dotm":
+      - "word/document.xml"
+    "*.xlsx":
+      - "xl/workbook.xml"
+    "*.xltx":
+      - "xl/workbook.xml"
+    "*.xltm":
+      - "xl/workbook.xml"
+    "*.xlsm":
+      - "xl/workbook.xml"
+    "*.pptx":
+      - "ppt/presentation.xml"
+    "*.pptm":
+      - "ppt/presentation.xml"
+    "*.potx":
+      - "ppt/presentation.xml"
+    "*.potm":
+      - "ppt/presentation.xml"
+  validate_ole:
+    "*.doc":
+      - "WordDocument"
+    "*.dot":
+      - "WordDocument"
+    "*.xls":
+      - "Workbook"
+    "*.xlt":
+      - "Workbook"
+    "*.ppt":
+      - "PowerPoint Document"
+    "*.pot":
+      - "PowerPoint Document"
+    # WPS （OLE/CFB，compatible with MS binary stream names）
+    "*.wps":
+      - "WordDocument"
+    "*.wpt":
+      - "WordDocument"
+    "*.et":
+      - "Workbook"
+    "*.ett":
+      - "Workbook"
+    "*.dps":
+      - "PowerPoint Document"
+    "*.dpt":
+      - "PowerPoint Document"
+  allowed_exts:
+    - "*.doc"
+    - "*.docx"
+    - "*.dotx"
+    - "*.dotm"
+    - "*.dot"    
+    - "*.xls"
+    - "*.xlsx"
+    - "*.xlsm"
+    - "*.xlt"
+    - "*.xltx"
+    - "*.xltm"
+    - "*.ppt"
+    - "*.pptx"
+    - "*.pptm"
+    - "*.potx"
+    - "*.potm"
+    - "*.pot"
+    - "*.wps"
+    - "*.wpt"
+    - "*.et"
+    - "*.ett"
+    - "*.dps"
+    - "*.dpt"
+
+watermark:
+  text: "PigooSoft"
+  angle: 45
+  density: light
+  density_count: 0
+  opacity: 0.25
+  color: "#808080"
+  font_size: 25
+  font_path: "C:\\Windows\\Fonts\\simhei.ttf"

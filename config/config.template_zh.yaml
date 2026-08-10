@@ -1,0 +1,379 @@
+# =============================================================================
+# MSOffice2Pdf — 配置说明模板（config.template_zh.yaml）
+# =============================================================================
+#
+# 用途：
+#   - 逐项说明全部配置键（类型、含义、约束、示例、环境变量）
+#   - 作为新建环境的可复制骨架（示例值为安全占位符，非本机真实密钥）
+#
+# 使用：
+#   cp config/config.template_zh.yaml config/config.yaml
+#   # 再按环境改 database.dsn、auth.jwt_secret 等
+#   ./bin/msoffice2pdf --config config/config.yaml
+#
+# 英文注释：config/config.template_en.yaml（键集合相同）
+#
+# 与 config.yaml 的关系：
+#   - 运行时只加载你指定的配置文件（通常为 config/config.yaml）
+#   - 本文件是文档 + 模板；本地/生产敏感值写在 config.yaml 或环境变量中
+#   - 【强制同步】对 config.yaml 增删改任何配置「键」时，必须同步更新
+#     config.template_zh.yaml 与 config.template_en.yaml 的对应键与说明注释
+#     （取值可不一致；键集合与说明必须跟上）
+#
+# 环境变量覆盖（启动时优先于 YAML 中的同名项）：
+#   MSOFFICE2PDF_DB_DSN      → database.dsn
+#   MSOFFICE2PDF_JWT_SECRET  → auth.jwt_secret
+#
+# 时长格式：Go time.Duration 字符串，如 30s、5m、1h、24h、168h
+# 大小格式：upload.max_size 支持 100MB / 1GB / 1024KB，或纯字节整数
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# server — HTTP 服务监听与超时
+# -----------------------------------------------------------------------------
+server:
+  # 监听端口。类型：int。约束：必须 > 0。示例：8080
+  # 服务绑定 :{port}；健康检查等均在此端口提供。
+  port: 8080
+
+  # HTTP 读超时（读完请求头+体的时限）。类型：Duration。示例：30s
+  # 含上传请求体读取；过大文件上传需结合 upload.max_size 与客户端超时一并考虑。
+  # 当前 Validate() 未强制 > 0，但建议显式配置正值。
+  read_timeout: 30s
+
+  # HTTP 写超时（写完响应的时限）。类型：Duration。示例：60s
+  # PDF 下载等大响应应留足余量；转换本身在 Worker 中异步，不占用该超时。
+  # 当前 Validate() 未强制 > 0，但建议显式配置正值。
+  write_timeout: 60s
+
+# -----------------------------------------------------------------------------
+# database — 数据库连接（GORM）
+# -----------------------------------------------------------------------------
+database:
+  # 驱动名。类型：string。约束：仅允许 mysql 或 postgres（启动校验）。
+  # mysql：使用 go-sql-driver / gorm mysql dialector
+  # postgres：使用 pgx/postgres dialector
+  driver: mysql
+
+  # 数据源名称 DSN。类型：string。约束：非空（启动校验）。
+  # 可被环境变量 MSOFFICE2PDF_DB_DSN 覆盖（推荐生产用环境变量注入）。
+  #
+  # MySQL 示例：
+  #   user:password@tcp(127.0.0.1:3306)/msoffice2pdf?charset=utf8mb4&parseTime=True&loc=Local
+  # PostgreSQL 示例（driver: postgres）：
+  #   host=127.0.0.1 user=app password=secret dbname=msoffice2pdf port=5432 sslmode=disable
+  #
+  # 注意：勿把真实密码提交进模板或公共仓库；本处仅为占位符。
+  dsn: "user:password@tcp(127.0.0.1:3306)/msoffice2pdf?charset=utf8mb4&parseTime=True&loc=Local"
+
+# -----------------------------------------------------------------------------
+# storage — 本地目录（相对路径相对进程工作目录；也可用绝对路径）
+# 布局约定见项目规范：
+#   upload/{uid}/{fileid}_{filename}
+#   output/{uid}/{upload.fileid}.pdf
+#   trash/{uid}/...
+#   expired/{uid}/...
+# -----------------------------------------------------------------------------
+storage:
+  # 原始 Office 上传目录。类型：string。约束：非空。
+  upload_dir: "./upload"
+
+  # 转换成功后的 PDF 输出目录。类型：string。约束：非空。
+  output_dir: "./output"
+
+  # 用户删除后的暂存目录（软删除对应）。类型：string。约束：非空。
+  trash_dir: "./trash"
+
+  # 上传 TTL 过期归档目录（cleanup 启用后写入）。类型：string。约束：非空。
+  expired_dir: "./expired"
+
+# -----------------------------------------------------------------------------
+# converter — 内存转换队列与 Office COM / stub
+# -----------------------------------------------------------------------------
+converter:
+  # Worker 并发数。类型：int。约束：必须 > 0。
+  # 建议约 CPU×2；过高会加重 Office COM 争用。示例：4
+  worker_count: 4
+
+  # 内存 channel 容量。类型：int。约束：必须 > 0。
+  # 队列满时上传仍成功，upload.status 保持 pending，由补入扫描再入队。
+  queue_size: 100
+
+  # 单次转换超时。类型：Duration。约束：必须 > 0。
+  # 超时后任务标 failed，并尝试结束本任务相关 Office 进程；不拖死 Worker。
+  office_timeout: 300s
+
+  # 从 DB 补入 pending|queued|converting 的扫描间隔。类型：Duration。约束：必须 > 0。
+  # 启动时也会立即扫一次；按 upload.id 升序尝试 TryEnqueue。
+  # 同周期扫杀超期 convert-worker，并 SweepTempSandboxes（mtime > office_timeout+2m 的 msoffice2pdf-com-*）。
+  requeue_interval: 30s
+
+  # Excel→PDF 页面适应。类型：string。合法值：fit_width | auto。缺省/空 = fit_width。
+  # fit_width：导出前对各 Worksheet 设 Zoom=false、FitToPagesWide=1、FitToPagesTall=false
+  #           （横向一页宽，纵向可分页）。PageSetup 失败仅 WARN，该表保留原设置并继续导出。
+  # auto：不改 PageSetup，沿用工作簿原有页面设置。
+  excel_page_fit: fit_width
+
+  # COM 转换进程模式。类型：string。合法值：subprocess | inprocess。缺省/空 = subprocess。
+  # subprocess：每个任务 exec 本程序 convert-worker 子进程跑 Office COM；COM 原生崩溃不拖垮主服务。
+  # inprocess：Worker 进程内 go-ole（与改前一致）；COM AV 可能导致整个进程退出，仅建议排查时使用。
+  com_mode: subprocess
+
+  # TEMP 沙箱：每任务在系统临时目录创建 msoffice2pdf-com-<id>/，并设置 TEMP/TMP/TMPDIR
+  # 指向该目录，使 Office 临时文件与 ~$ 锁文件落在沙箱内（不复制源文件到 TEMP 再打开）。
+  # 类型：bool。缺省/nil = true。subprocess 经 cmd.Env 注入，convert-worker 继承。
+  # 与 com_mode=inprocess 同时启用时，worker_count 必须为 1（启动校验）。
+  temp_sandbox: true
+
+  # 转换失败额外重试次数。类型：int。约束：>= 0。
+  # 语义：首次失败后再重试的次数。例：2 ⇒ 最多 1+2=3 次转换尝试；0 ⇒ 首次失败即归档。
+  # 超限错误码：ERR_RETRY_LIMIT_EXCEEDED（写入 upload_history）。
+  retry_count: 2
+
+  # 失败后距再次入队的最短等待。类型：Duration。约束：必须 > 0。
+  # 独立于 requeue_interval（后者只补 pending|queued|converting）。
+  retry_interval: 30s
+
+  # 本进程启用的转换引擎 name 列表。类型：string[]。
+  # 约束：键缺失/null 时规范化为 [msoffice]；显式 [] 非法；元素唯一；当前合法名：msoffice | wpsoffice | openoffice。
+  # 启动时：COM 引擎（msoffice / wpsoffice）对列表每一项做 COM ProgID 探测（Writer/Spreadsheet/Presentation），任一项失败则 ERROR 并退出；
+  # openoffice 执行 command --version 探测；未安装 WPS 时不要列入 wpsoffice。
+  engines:
+    - msoffice
+    # - wpsoffice
+    # - openoffice
+
+  # openoffice — LibreOffice / Apache OpenOffice CLI（仅当 engines 含 openoffice 时必填）
+  # openoffice:
+  #   command: "C:/Program Files/LibreOffice/program/soffice.exe"  # 或 PATH 中的 soffice
+  #   user_profile: "C:/data/msoffice2pdf/lo-profile"            # 每任务使用子目录 {user_profile}/{uuid}/
+
+  # 扩展名 → 引擎 name。类型：map[string]string。无 auto；值必须出现在 converter.engines 中。
+  # 键与 upload.allowed_exts 同形（*.docx / .docx / docx 均可；校验后规范化为裸扩展名如 docx）。
+  # allowed_exts 中缺少映射：启动 ERROR 日志（不退出）；上传拒绝（HTTP 400 / 40004 / ERR_EXT_ENGINE_UNMAPPED）。
+  # 启用 wpsoffice 时可增加 *.wps / *.wpt / *.et / *.ett / *.dps / *.dpt → wpsoffice
+  # （并在 upload.validate_ole 中配置对应流名；见 upload 节）。
+  ext_engines:
+    "*.doc": msoffice
+    "*.docx": msoffice
+    "*.dot": msoffice
+    "*.dotx": msoffice
+    "*.dotm": msoffice
+    "*.xls": msoffice
+    "*.xlsx": msoffice
+    "*.xlsm": msoffice
+    "*.xlt": msoffice
+    "*.xltx": msoffice
+    "*.xltm": msoffice
+    "*.ppt": msoffice
+    "*.pptx": msoffice
+    "*.pptm": msoffice
+    "*.pot": msoffice
+    "*.potx": msoffice
+    "*.potm": msoffice
+    # "*.wps": wpsoffice
+    # "*.wpt": wpsoffice
+    # "*.et": wpsoffice
+    # "*.ett": wpsoffice
+    # "*.dps": wpsoffice
+    # "*.dpt": wpsoffice
+
+# -----------------------------------------------------------------------------
+# cleanup — 后台 TTL 清理（P5：upload / PDF；不做 trash TTL）
+# -----------------------------------------------------------------------------
+cleanup:
+  # [已废弃] 上传 TTL：终态上传现已立即经 ArchiveUpload 归档；保留键仅兼容旧配置，清理逻辑忽略。
+  # 类型：Duration。可注释或省略。示例：24h
+  # upload_ttl: 24h
+
+  # 是否启用 upload_history 行级 TTL 清理。false 时仅依赖磁盘归档，不删 history 表行。
+  # 类型：bool。示例：false
+  history_ttl_enabled: false
+
+  # upload_history 保留时长：archived_at 超过此时长的记录参与 TTL 清理（删磁盘文件，可选删表行）。
+  # 类型：Duration。约束：history_ttl_enabled=true 时必须 > 0。示例：24h
+  history_ttl: 24h
+
+  # TTL 清理时是否物理删除 upload_history 表行。false 仅删 expired/ 下文件并保留行（便于审计）。
+  # 类型：bool。示例：false
+  history_ttl_delete_row: false
+
+  # PDF 保留时长：status 为 completed|failed 且 created_at 超过此时长则删 output 文件、标 expired、写 pdflog。
+  # 类型：Duration。约束：必须 > 0。示例：24h
+  pdf_ttl: 24h
+
+  # 清理扫描周期；启动时立即跑一轮。类型：Duration。约束：必须 > 0。示例：1h
+  interval: 1h
+
+# -----------------------------------------------------------------------------
+# auth — Web JWT 与相关密钥
+# 说明：长期 API Token（X-UID + X-Token）存用户表，不由此处过期字段控制；
+#       token_expire 作用于登录签发的短期 JWT。
+# -----------------------------------------------------------------------------
+auth:
+  # JWT 签名密钥。类型：string。约束：非空（启动校验）。
+  # 可被环境变量 MSOFFICE2PDF_JWT_SECRET 覆盖。
+  # 生产必须更换为足够长的随机串；勿提交真实密钥。
+  jwt_secret: "change-me-in-production"
+
+  # Web 登录 JWT 有效期。类型：Duration。示例：48h
+  # 与 architecture 文档中「长期 Token」概念不同；API Token 另行管理。
+  token_expire: 48h
+
+# -----------------------------------------------------------------------------
+# log — 进程日志
+# -----------------------------------------------------------------------------
+log:
+  # 日志级别。类型：string。常用：debug / info / warn / error（具体以实现解析为准）。
+  # 勿在日志中打印密码、Token、完整 JWT。
+  level: info
+
+  # 日志输出目标。类型：string。当前实现以 stdout JSON 为主；文件开关见 file_enabled。
+  # 示例：stdout
+  output: stdout
+
+  # 是否将日志同步写入按日文件。类型：bool。缺省/nil = false。
+  # true 时写入 {file_dir}/yyyymmdd.log；启动时创建目录，打开文件失败则启动失败。
+  file_enabled: false
+
+  # 文件日志目录。类型：string。相对工作目录或绝对路径。file_enabled=true 时必填。
+  # 示例：logs
+  file_dir: logs
+
+  # 缓冲日志周期强制 flush。类型：duration 字符串（如 5s）。file_enabled=false 时忽略。
+  # <=0：不做周期 flush，进程退出 Close 时仍 Sync。示例：5s
+  flush_interval: 5s
+
+# -----------------------------------------------------------------------------
+# upload — 上传限制
+# -----------------------------------------------------------------------------
+upload:
+  # 单文件最大体积。类型：string，启动时解析为字节。
+  # 格式：正整数 + 可选单位 KB/MB/GB（大小写不敏感），或纯字节数。
+  # 约束：解析后必须 > 0。示例：100MB
+  max_size: 100MB
+
+  # 是否启用魔数校验（仅文件头：OLE D0 CF… 或 ZIP PK，须与扩展名家族一致）。
+  # 类型：bool。缺省/nil = true。ZIP/OLE 结构深度校验见 validate_new / validate_ole。
+  # OOXML/OLE 家族由扩展名归属哪张 validate_* 表决定（禁止代码硬编码扩展名列表）。
+  validate_magic: true
+
+  # OOXML 扩展名 → zip 内必须存在的路径列表。类型：map[string][]string。
+  # 出现在 validate_new 的扩展按 OOXML（ZIP）校验；出现在 validate_ole 的按 OLE 校验。
+  # 同一扩展不可两边都有；皆无则跳过结构校验（仅魔数在有家族时生效）。
+  validate_new:
+    "*.docx":
+      - "word/document.xml"
+    "*.dotx":
+      - "word/document.xml"
+    "*.dotm":
+      - "word/document.xml"
+    "*.xlsx":
+      - "xl/workbook.xml"
+    "*.xltx":
+      - "xl/workbook.xml"
+    "*.xltm":
+      - "xl/workbook.xml"
+    "*.xlsm":
+      - "xl/workbook.xml"
+    "*.pptx":
+      - "ppt/presentation.xml"
+    "*.pptm":
+      - "ppt/presentation.xml"
+    "*.potx":
+      - "ppt/presentation.xml"
+    "*.potm":
+      - "ppt/presentation.xml"
+
+  # OLE 扩展名 → 复合文档内必须存在的流名列表。类型：map[string][]string。
+  # 与 validate_new 互斥：同一扩展不可两边都有。
+  # WPS 原生 .wps/.wpt/.et/.ett/.dps/.dpt 为 OLE/CFB，流名与对应 MS 二进制格式兼容。
+  validate_ole:
+    "*.doc":
+      - "WordDocument"
+    "*.dot":
+      - "WordDocument"
+    "*.xls":
+      - "Workbook"
+    "*.xlt":
+      - "Workbook"
+    "*.ppt":
+      - "PowerPoint Document"
+    "*.pot":
+      - "PowerPoint Document"
+    "*.wps":
+      - "WordDocument"
+    "*.wpt":
+      - "WordDocument"
+    "*.et":
+      - "Workbook"
+    "*.ett":
+      - "Workbook"
+    "*.dps":
+      - "PowerPoint Document"
+    "*.dpt":
+      - "PowerPoint Document"
+
+  # 允许的扩展名模式列表。类型：string 数组。约束：不得为空。
+  # 支持 "*.docx"、".docx"、"docx" 等形式；匹配时大小写不敏感。
+  # 仅应包含 Office 文档类型，勿放宽到任意文件。
+  allowed_exts:
+    - "*.doc"
+    - "*.docx"
+    - "*.dotx"
+    - "*.dotm"
+    - "*.dot"
+    - "*.xls"
+    - "*.xlsx"
+    - "*.xlsm"
+    - "*.xlt"
+    - "*.xltx"
+    - "*.xltm"
+    - "*.ppt"
+    - "*.pptx"
+    - "*.pptm"
+    - "*.potx"
+    - "*.potm"
+    - "*.pot"
+    - "*.wps"
+    - "*.wpt"
+    - "*.et"
+    - "*.ett"
+    - "*.dps"
+    - "*.dpt"
+
+# -----------------------------------------------------------------------------
+# watermark — PDF 后处理文字水印（COM 导出成功后施加）
+# -----------------------------------------------------------------------------
+# 启用：配置 text 非空，或上传表单 watermark（副水印）非空。
+# 主+副：每个水印单元两行（上行主、下行副，副字号约为主的 70%）。
+# 仅副：只显示副水印一行。主、副皆空：不打水印。
+# 注意：YAML 数值缺省为 0；opacity 务必显式配置（如 0.25），勿省略整节导致透明度为 0。
+watermark:
+  # 主水印文本。类型：string。空且上传无副水印 → 不打水印。
+  text: ""
+
+  # 斜率（度）。类型：float。负值常见为左上→右下倾斜。示例：-45
+  angle: -45
+
+  # 平铺密度。类型：string。合法值：light | medium | heavy。缺省/空 = medium。
+  # light 最疏，heavy 相对最密（三者均按文字尺寸留白，多行错位平铺）。
+  # 当 density_count 为 1..19 时忽略本项。
+  density: medium
+
+  # 每页水印个数。类型：int。0 = 使用 density；1..19 = 按固定个数铺点（多行错位）并忽略 density。
+  density_count: 0
+
+  # 透明度。类型：float。约束：[0, 1]。1=不透明，0=完全透明。须显式配置。
+  opacity: 0.25
+
+  # 颜色。类型：string。格式：#RRGGBB。缺省/空 = #808080。
+  color: "#808080"
+
+  # 主水印字号（pt）。类型：float。约束：>= 0。0/缺省 = 按页宽自动估算；副水印 ≈ 主×0.7。
+  font_size: 0
+
+  # 字体文件路径（TTF/OTF）。类型：string。空则尝试系统中文字体（如微软雅黑）。
+  # 若系统仅有 TTC 导致加载失败，请显式指定可用的 .ttf。
+  font_path: ""
+
