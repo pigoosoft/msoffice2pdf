@@ -6,20 +6,22 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"runtime"
 	"strings"
 	"syscall"
 
 	"msoffice2pdf/internal/applog"
 	"msoffice2pdf/internal/appruntime"
 	"msoffice2pdf/internal/config"
+	"msoffice2pdf/internal/desktop"
 	"msoffice2pdf/internal/version"
 )
 
 func main() {
-	configPath, args := parseGlobalConfig(os.Args[1:])
+	configPath, noui, args := parseGlobalConfig(os.Args[1:])
 
 	if len(args) == 0 || args[0] == "serve" {
-		runServe(configPath)
+		runServe(configPath, noui)
 		return
 	}
 
@@ -61,14 +63,24 @@ func printVersion() {
 	fmt.Printf("%s\nversion %s\n", version.Copyright, version.Version)
 }
 
-func runServe(configPath string) {
+func runServe(configPath string, noui bool) {
 	cfg, err := config.Load(configPath)
 	if err != nil {
 		slog.Error("load config failed", "err", err)
 		os.Exit(1)
 	}
 
-	logCloser, err := applog.Init(cfg.Log)
+	wantUI := desktop.ShouldUseUI(noui, runtime.GOOS, os.Getenv("DISPLAY"))
+	var extras []slog.Handler
+	var ring *applog.Ring
+	if wantUI {
+		ring = applog.NewRing(applog.RingCapDefault)
+		extras = append(extras, ring.Handler(nil))
+	} else if !noui && runtime.GOOS == "linux" {
+		slog.Warn("no display; falling back to console mode")
+	}
+
+	logCloser, err := applog.Init(cfg.Log, extras...)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "init logger failed: %v\n", err)
 		os.Exit(1)
@@ -76,6 +88,14 @@ func runServe(configPath string) {
 	defer func() { _ = logCloser.Close() }()
 
 	rt := appruntime.New(cfg)
+	if wantUI {
+		if err := desktop.Run(cfg, configPath, ring, rt); err != nil {
+			slog.Error("desktop ui failed; falling back to console", "err", err)
+		} else {
+			return
+		}
+	}
+
 	if err := rt.Start(); err != nil {
 		slog.Error("runtime start failed", "err", err)
 		os.Exit(1)
@@ -91,7 +111,7 @@ func runServe(configPath string) {
 	}
 }
 
-func parseGlobalConfig(args []string) (configPath string, remaining []string) {
+func parseGlobalConfig(args []string) (configPath string, noui bool, remaining []string) {
 	configPath = "config/config.yaml"
 	remaining = make([]string, 0, len(args))
 	for i := 0; i < len(args); i++ {
@@ -105,15 +125,19 @@ func parseGlobalConfig(args []string) (configPath string, remaining []string) {
 			i++
 			continue
 		}
+		if arg == "--noui" {
+			noui = true
+			continue
+		}
 		remaining = append(remaining, arg)
 	}
-	return configPath, remaining
+	return configPath, noui, remaining
 }
 
 func printUsage() {
 	fmt.Fprintf(os.Stderr, `Usage:
-  msoffice2pdf [--config=PATH]
-  msoffice2pdf serve [--config=PATH]
+  msoffice2pdf [--config=PATH] [--noui]
+  msoffice2pdf serve [--config=PATH] [--noui]
   msoffice2pdf version
   msoffice2pdf user create-admin --uid=UID --pwd=PWD [--config=PATH]
   msoffice2pdf user create --uid=UID --pwd=PWD [--config=PATH]

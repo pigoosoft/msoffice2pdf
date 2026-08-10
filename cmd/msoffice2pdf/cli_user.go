@@ -15,7 +15,7 @@ import (
 )
 
 func runUserCommand(configPath, subcmd string, args []string) error {
-	_, args = parseGlobalConfig(args)
+	_, _, args = parseGlobalConfig(args)
 	flags := parseFlags(args)
 
 	cfg, err := config.Load(configPath)
