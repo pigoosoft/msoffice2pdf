@@ -51,15 +51,22 @@ func (s Status) String() string {
 // Runtime owns the restartable service stack (DB, queue, cleanup, HTTP).
 // Each successful Start allocates new Queue/CleanupService/Server instances;
 // those types use sync.Once on Stop and must not be restarted in place.
+//
+// Concurrency:
+//   - startStopMu serializes Start/Stop so only one transition runs at a time
+//     (Stop during Starting waits for Start to finish, then stops).
+//   - mu protects status and resource fields; Start/Stop release mu during I/O
+//     so Status() can observe Starting and Stopping.
 type Runtime struct {
 	cfg *config.Config
 
-	mu      sync.Mutex
-	status  Status
-	gdb     *gorm.DB
-	queue   *queue.Queue
-	cleanup *service.CleanupService
-	srv     *server.Server
+	startStopMu sync.Mutex // serializes Start / Stop bodies
+	mu          sync.Mutex // status + resource fields
+	status      Status
+	gdb         *gorm.DB
+	queue       *queue.Queue
+	cleanup     *service.CleanupService
+	srv         *server.Server
 }
 
 // New returns a Runtime in Stopped state. cfg must already be loaded.
@@ -79,41 +86,63 @@ func (rt *Runtime) Status() Status {
 
 // Start brings up converter validation, DB, storage, queue, cleanup, and HTTP.
 // Idempotent no-op if already Running or Starting. On failure sets Failed.
+// Concurrent Start calls are serialized; a second Start that arrives while
+// Starting waits, then no-ops if the first succeeded (Running).
 func (rt *Runtime) Start() error {
-	rt.mu.Lock()
-	defer rt.mu.Unlock()
+	rt.startStopMu.Lock()
+	defer rt.startStopMu.Unlock()
 
+	rt.mu.Lock()
 	if rt.status == Running || rt.status == Starting {
+		rt.mu.Unlock()
 		return nil
 	}
-
 	rt.status = Starting
-	if err := rt.startLocked(); err != nil {
-		rt.cleanupPartialLocked()
+	rt.mu.Unlock()
+
+	if err := rt.startWork(); err != nil {
+		rt.mu.Lock()
+		srv, cleanup, q, gdb := rt.takeResourcesLocked()
+		rt.mu.Unlock()
+		_ = stopResources(srv, cleanup, q, gdb)
+
+		rt.mu.Lock()
 		rt.status = Failed
+		rt.mu.Unlock()
 		return err
 	}
+
+	rt.mu.Lock()
 	rt.status = Running
+	rt.mu.Unlock()
 	return nil
 }
 
 // Stop shuts down HTTP, cleanup, queue, and closes the SQL DB.
-// Safe if already Stopped.
+// Safe if already Stopped. If Start is in progress, waits for it to finish
+// (via startStopMu), then stops the resulting Running/Failed runtime.
 func (rt *Runtime) Stop() error {
-	rt.mu.Lock()
-	defer rt.mu.Unlock()
+	rt.startStopMu.Lock()
+	defer rt.startStopMu.Unlock()
 
+	rt.mu.Lock()
 	if rt.status == Stopped {
+		rt.mu.Unlock()
 		return nil
 	}
-
 	rt.status = Stopping
-	err := rt.stopLocked()
+	srv, cleanup, q, gdb := rt.takeResourcesLocked()
+	rt.mu.Unlock()
+
+	err := stopResources(srv, cleanup, q, gdb)
+
+	rt.mu.Lock()
 	rt.status = Stopped
+	rt.mu.Unlock()
 	return err
 }
 
-func (rt *Runtime) startLocked() error {
+func (rt *Runtime) startWork() error {
 	cfg := rt.cfg
 
 	convOpts := converter.Options{
@@ -135,7 +164,9 @@ func (rt *Runtime) startLocked() error {
 	if err != nil {
 		return fmt.Errorf("database init failed: %w", err)
 	}
+	rt.mu.Lock()
 	rt.gdb = gdb
+	rt.mu.Unlock()
 
 	if err := storage.EnsureDirs(cfg.Storage); err != nil {
 		return fmt.Errorf("ensure storage dirs failed: %w", err)
@@ -173,8 +204,11 @@ func (rt *Runtime) startLocked() error {
 	)
 	q.Start()
 	cleanup.Start()
+
+	rt.mu.Lock()
 	rt.queue = q
 	rt.cleanup = cleanup
+	rt.mu.Unlock()
 
 	srv := server.New(server.Deps{
 		DB:          gdb,
@@ -183,7 +217,9 @@ func (rt *Runtime) startLocked() error {
 		Cleanup:     cleanup,
 		HistoryRepo: historyRepo,
 	})
+	rt.mu.Lock()
 	rt.srv = srv
+	rt.mu.Unlock()
 	errCh := srv.ListenAndServeBackground()
 	go rt.watchListenErrors(errCh)
 
@@ -197,38 +233,58 @@ func (rt *Runtime) watchListenErrors(errCh <-chan error) {
 	}
 	slog.Error("http server failed", "err", err)
 
+	rt.startStopMu.Lock()
+	defer rt.startStopMu.Unlock()
+
 	rt.mu.Lock()
-	defer rt.mu.Unlock()
 	if rt.status != Running {
+		rt.mu.Unlock()
 		return
 	}
-	_ = rt.stopLocked()
+	rt.status = Stopping
+	srv, cleanup, q, gdb := rt.takeResourcesLocked()
+	rt.mu.Unlock()
+
+	_ = stopResources(srv, cleanup, q, gdb)
+
+	rt.mu.Lock()
 	rt.status = Failed
+	rt.mu.Unlock()
 }
 
-func (rt *Runtime) stopLocked() error {
+// takeResourcesLocked clears and returns owned resources. Caller must hold mu.
+func (rt *Runtime) takeResourcesLocked() (srv *server.Server, cleanup *service.CleanupService, q *queue.Queue, gdb *gorm.DB) {
+	srv = rt.srv
+	cleanup = rt.cleanup
+	q = rt.queue
+	gdb = rt.gdb
+	rt.srv = nil
+	rt.cleanup = nil
+	rt.queue = nil
+	rt.gdb = nil
+	return srv, cleanup, q, gdb
+}
+
+func stopResources(srv *server.Server, cleanup *service.CleanupService, q *queue.Queue, gdb *gorm.DB) error {
 	var firstErr error
 
-	if rt.srv != nil {
+	if srv != nil {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		if err := rt.srv.Shutdown(shutdownCtx); err != nil && firstErr == nil {
+		if err := srv.Shutdown(shutdownCtx); err != nil && firstErr == nil {
 			firstErr = err
 		}
 		cancel()
-		rt.srv = nil
 	}
 
-	if rt.cleanup != nil {
-		rt.cleanup.Stop()
-		rt.cleanup = nil
+	if cleanup != nil {
+		cleanup.Stop()
 	}
-	if rt.queue != nil {
-		rt.queue.Stop()
-		rt.queue = nil
+	if q != nil {
+		q.Stop()
 	}
 
-	if rt.gdb != nil {
-		sqlDB, err := rt.gdb.DB()
+	if gdb != nil {
+		sqlDB, err := gdb.DB()
 		if err != nil {
 			if firstErr == nil {
 				firstErr = err
@@ -236,14 +292,9 @@ func (rt *Runtime) stopLocked() error {
 		} else if err := sqlDB.Close(); err != nil && firstErr == nil {
 			firstErr = err
 		}
-		rt.gdb = nil
 	}
 
 	return firstErr
-}
-
-func (rt *Runtime) cleanupPartialLocked() {
-	_ = rt.stopLocked()
 }
 
 func extKeys(m map[string]string) []string {
