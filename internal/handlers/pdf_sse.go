@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -19,8 +20,9 @@ func (h *PdfHandler) Events(c *gin.Context) {
 		return
 	}
 
+	// Accept repeated ?fileid=a&fileid=b and/or comma-separated ?fileid=a,b,c
 	raw := c.QueryArray("fileid")
-	fileIDs := dedupeNonEmpty(raw)
+	fileIDs := expandFileIDs(raw)
 	if len(fileIDs) == 0 {
 		Fail(c, http.StatusBadRequest, CodeBadRequest, "fileid required")
 		return
@@ -152,18 +154,22 @@ func (h *PdfHandler) Events(c *gin.Context) {
 	}
 }
 
-func dedupeNonEmpty(in []string) []string {
+// expandFileIDs splits each query value on commas, trims space, and dedupes.
+func expandFileIDs(in []string) []string {
 	seen := make(map[string]struct{}, len(in))
 	out := make([]string, 0, len(in))
 	for _, s := range in {
-		if s == "" {
-			continue
+		for _, part := range strings.Split(s, ",") {
+			id := strings.TrimSpace(part)
+			if id == "" {
+				continue
+			}
+			if _, ok := seen[id]; ok {
+				continue
+			}
+			seen[id] = struct{}{}
+			out = append(out, id)
 		}
-		if _, ok := seen[s]; ok {
-			continue
-		}
-		seen[s] = struct{}{}
-		out = append(out, s)
 	}
 	return out
 }
