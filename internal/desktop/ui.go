@@ -1,6 +1,7 @@
 package desktop
 
 import (
+	"fmt"
 	"log/slog"
 	"strconv"
 	"strings"
@@ -20,7 +21,13 @@ import (
 
 const logRefreshInterval = 300 * time.Millisecond
 
-func runFyne(cfg *config.Config, configPath string, ring *applog.Ring, rt *appruntime.Runtime) error {
+func runFyne(cfg *config.Config, configPath string, ring *applog.Ring, rt *appruntime.Runtime) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("desktop ui panic: %v", r)
+		}
+	}()
+
 	_ = cfg
 	s := loadStrings()
 
@@ -238,7 +245,7 @@ func runFyne(cfg *config.Config, configPath string, ring *applog.Ring, rt *appru
 	w.ShowAndRun()
 	signalDone()
 	_ = rt.Stop()
-	return nil
+	return err
 }
 
 func statusText(s uiStrings, st appruntime.Status) string {
