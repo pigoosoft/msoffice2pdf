@@ -157,7 +157,7 @@ upload:
     - "*.dpt"
 
 watermark:
-  text: "PigooSoft"
+  text: ""
   angle: 45
   density: light
   density_count: 0
