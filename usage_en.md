@@ -610,6 +610,7 @@ Allowed types and size come from `upload.allowed_exts` and `upload.max_size`. Up
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/api/pdf/:fileid/status` | Conversion status (`upload` first, then `upload_history`; includes `final_status` / `error_code`, etc.) |
+| GET | `/api/pdf/events` | SSE subscribe to one or more `fileid` query params; events `status` / `ping` / `done`; see `server.sse.*` |
 | GET | `/api/pdf/:fileid/download` | Download PDF (after hard-delete of upload, linked via `upload_history.upload_id`; not ready → 409) |
 | GET | `/api/pdfs` | Current user's PDF list |
 | GET | `/api/admin/pdfs` | Admin: all PDFs |
@@ -622,6 +623,13 @@ Status / list JSON includes `warn_code` (empty or `WARN_WATERMARK`). Polling `st
 # poll status
 curl -s http://127.0.0.1:8080/api/pdf/<fileid>/status \
   -H "X-UID: u1" -H "X-Token: <api_token>"
+
+# SSE status (one or more fileid=; -N disables curl buffering)
+curl -N http://127.0.0.1:8080/api/pdf/events?fileid=<fileid> \
+  -H "X-UID: u1" -H "X-Token: <api_token>"
+# Initial `status` events mirror GET .../status for each fileid; then `status` on change,
+# `ping` heartbeats, and `done` when all fileids are terminal or server.sse.max_duration
+# (default 5m) is reached. Clients may reconnect; server.write_timeout does not apply to this stream.
 
 # download PDF (-o sets save-as name; or -OJ for Content-Disposition name)
 curl -s -o report.pdf http://127.0.0.1:8080/api/pdf/<fileid>/download \
