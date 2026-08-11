@@ -46,6 +46,17 @@ server:
   # 当前 Validate() 未强制 > 0，但建议显式配置正值。
   write_timeout: 60s
 
+  # 转换状态 SSE（GET /api/pdf/events）连接参数。
+  sse:
+    # 单连接最长持续时间。类型：Duration。默认：5m
+    max_duration: 5m
+    # 心跳间隔（保持连接）。类型：Duration。默认：15s；须 < max_duration
+    heartbeat_interval: 15s
+    # 轮询 upload 状态间隔。类型：Duration。默认：1s；须 < max_duration
+    poll_interval: 1s
+    # 单次请求最多订阅 fileid 数量。类型：int。默认：50
+    max_fileids: 50
+
 # -----------------------------------------------------------------------------
 # database — 数据库连接（GORM）
 # -----------------------------------------------------------------------------

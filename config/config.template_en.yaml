@@ -46,6 +46,17 @@ server:
   # Validate() does not currently require > 0, but a positive value is recommended.
   write_timeout: 60s
 
+  # Conversion status SSE (GET /api/pdf/events) connection settings.
+  sse:
+    # Max duration per connection. Type: Duration. Default: 5m
+    max_duration: 5m
+    # Heartbeat interval to keep connection alive. Type: Duration. Default: 15s; must be < max_duration
+    heartbeat_interval: 15s
+    # Poll interval for upload status. Type: Duration. Default: 1s; must be < max_duration
+    poll_interval: 1s
+    # Max fileids per request. Type: int. Default: 50
+    max_fileids: 50
+
 # -----------------------------------------------------------------------------
 # database — database connection (GORM)
 # -----------------------------------------------------------------------------
