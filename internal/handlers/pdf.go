@@ -6,12 +6,14 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"msoffice2pdf/internal/config"
 	"msoffice2pdf/internal/domain"
 	"msoffice2pdf/internal/service"
 )
 
 type PdfHandler struct {
 	Svc *service.PdfService
+	SSE config.SSEConfig
 }
 
 type pdfView struct {
