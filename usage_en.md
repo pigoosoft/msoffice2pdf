@@ -1,7 +1,8 @@
 # MSOffice2Pdf Usage Guide
 
-This document covers server installation, foreground operation, CLI user management, and HTTP API usage.  
+This document covers server installation, foreground operation, CLI user management, and HTTP API usage.
 
+Chinese SSE client / server notes: [usage_zh.md](./usage_zh.md). Detailed SSE design: `docs/详细设计说明书.md` §4.4.
 
 ---
 
@@ -619,19 +620,80 @@ Queue status flow: `pending` → `queued` → `converting` → `failed` (awaitin
 
 Status / list JSON includes `warn_code` (empty or `WARN_WATERMARK`). Polling `status` also returns `warn_code` when a pdf row exists.
 
+#### Conversion status SSE (client + server)
+
+Use SSE when you want push updates for one or many uploads instead of polling `GET /api/pdf/:fileid/status`. Polling remains supported.
+
+**Endpoint:** `GET /api/pdf/events`  
+**Auth:** same as other API calls (`X-UID` + `X-Token`, or Web session cookie).  
+**Query `fileid` (required):** both forms are accepted and may be mixed; values are trimmed and deduped; count must be `1 … server.sse.max_fileids` (default 50).
+
+| Form | Example |
+|------|---------|
+| Repeated | `?fileid=aaa&fileid=bbb` |
+| Comma-separated | `?fileid=aaa,bbb,ccc` |
+
+Any unknown / forbidden `fileid` fails the whole request **before** the stream opens (JSON `404` / `403`); there is no half-open subscription.
+
+**Events (`text/event-stream`):**
+
+| `event` | When | `data` |
+|---------|------|--------|
+| `status` | Immediately once per subscribed `fileid` (snapshot), then again when status fingerprint changes | Same JSON shape as `GET /api/pdf/:fileid/status` (`fileid`, `request_id`, `status`, `final_status`, `error_*`, `retry_count`, `warn_code`, …) |
+| `ping` | Every `server.sse.heartbeat_interval` (default `15s`) | `{}` (ignore) |
+| `done` | Stream ends | `{"reason":"all_terminal","fileids":[…]}` or `{"reason":"max_duration","fileids":[…],"pending":[…]}` |
+
+Map UI rows by `request_id` / `fileid`. After `done`, reconnect with the same (or remaining) `fileid`s if you still need updates.
+
+**Server operating model (summary):**
+
+1. Preflight: resolve + ACL every `fileid` via the same logic as status API.  
+2. Clear this connection’s write deadline so global `server.write_timeout` (e.g. 60s) does **not** kill the stream.  
+3. Emit snapshot `status` events; if all are already terminal, emit `done(all_terminal)` and close.  
+4. Loop: every `poll_interval` (default `1s`) re-query DB; emit `status` only when fingerprint `(status, retry_count, error_msg, final_status, error_code, warn_code)` changes; send `ping` on heartbeat.  
+5. Close with `done` when every file is **terminal** (archived `final_status` = `completed` / `failed` / `deleted`) or when `max_duration` (default **5m**) elapses. Live queue `failed` awaiting retry is **not** terminal.
+
+Config (`config.yaml` / templates):
+
+```yaml
+server:
+  sse:
+    max_duration: 5m        # SSE business timeout (not office_timeout)
+    heartbeat_interval: 15s
+    poll_interval: 1s
+    max_fileids: 50
+```
+
+**curl examples:**
+
 ```bash
 # poll status
 curl -s http://127.0.0.1:8080/api/pdf/<fileid>/status \
   -H "X-UID: u1" -H "X-Token: <api_token>"
 
-# SSE status (-N disables curl buffering). fileid may be comma-separated or repeated:
-#   ?fileid=id1,id2,id3   or   ?fileid=id1&fileid=id2
+# SSE — repeated fileid=
+curl -N "http://127.0.0.1:8080/api/pdf/events?fileid=<id1>&fileid=<id2>" \
+  -H "X-UID: u1" -H "X-Token: <api_token>"
+
+# SSE — comma-separated fileid=
 curl -N "http://127.0.0.1:8080/api/pdf/events?fileid=<id1>,<id2>" \
   -H "X-UID: u1" -H "X-Token: <api_token>"
-# Initial `status` events mirror GET .../status for each fileid; then `status` on change,
-# `ping` heartbeats, and `done` when all fileids are terminal or server.sse.max_duration
-# (default 5m) is reached. Clients may reconnect; server.write_timeout does not apply to this stream.
+```
 
+**Local smoke client** (`testdata/sse_smoke`, gitignored sample Office files + tool): uploads `1.*`…`8.*` with `X-Request-ID` `1`…`8`, then prints SSE events to the console.
+
+```bash
+# repo root
+go run ./testdata/sse_smoke
+
+# or from testdata/
+go run ./sse_smoke
+
+# optional: -base -uid -token -dir -from -to -comma
+go run ./sse_smoke -comma   # use ?fileid=a,b,c instead of repeated fileid=
+```
+
+```bash
 # download PDF (-o sets save-as name; or -OJ for Content-Disposition name)
 curl -s -o report.pdf http://127.0.0.1:8080/api/pdf/<fileid>/download \
   -H "X-UID: u1" -H "X-Token: <api_token>"
@@ -698,6 +760,7 @@ curl -s -o "./out-$FILEID.pdf" "$BASE/api/pdf/$FILEID/download" \
 | Topic | Notes |
 |-------|-------|
 | Conversion queue | `converter.worker_count` / `queue_size` / `office_timeout` / `requeue_interval` / `retry_count` / `retry_interval` / `excel_page_fit` / `com_mode` / `temp_sandbox` / `engines` / `ext_engines` / `openoffice` |
+| Status SSE | `server.sse.max_duration` / `heartbeat_interval` / `poll_interval` / `max_fileids`; endpoint `GET /api/pdf/events` (see §5.6) |
 | PDF watermark | `watermark.text` / `angle` / `density` / `opacity` / `color` / `font_size` / `font_path`; upload form secondary field `watermark` |
 | TTL cleanup | `cleanup.history_ttl_enabled` / `history_ttl` / `history_ttl_delete_row` / `pdf_ttl` / `interval`; one run at startup; terminal uploads use immediate `ArchiveUpload` (**not** `upload_ttl`); user deletes go to `trash/`, **no** trash TTL |
 | Account freeze | `user.status`: `0` active, `1` frozen |
