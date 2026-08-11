@@ -63,6 +63,8 @@ By default on **Windows** (and on **Linux when `DISPLAY` is set**), the process 
 ./bin/msoffice2pdf --noui --config config/config.yaml
 ```
 
+Only one serve instance is allowed per machine (Windows / Linux / macOS); a second launch exits with an error. Startup also fails if `server.port` is already in use.
+
 5. After the service is running (click **Start** in the desktop shell, or use `--noui`), health-check: `curl -i http://127.0.0.1:8080/health`
 
 ### Create MySQL database

@@ -2,6 +2,7 @@ package desktop
 
 import (
 	"fmt"
+	"image/color"
 	"log/slog"
 	"strconv"
 	"strings"
@@ -11,15 +12,25 @@ import (
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/app"
 	"fyne.io/fyne/v2/container"
+	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/layout"
+	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 
 	"msoffice2pdf/internal/applog"
 	"msoffice2pdf/internal/appruntime"
 	"msoffice2pdf/internal/config"
+	"msoffice2pdf/internal/version"
 )
 
-const logRefreshInterval = 300 * time.Millisecond
+const (
+	logRefreshInterval = 300 * time.Millisecond
+
+	filterLinesWidth  float32 = 72
+	filterLevelWidth  float32 = 110
+	filterUIDWidth    float32 = 160
+	filterActionWidth float32 = 160
+)
 
 func runFyne(cfg *config.Config, configPath string, ring *applog.Ring, rt *appruntime.Runtime) (err error) {
 	defer func() {
@@ -34,6 +45,13 @@ func runFyne(cfg *config.Config, configPath string, ring *applog.Ring, rt *appru
 	a := app.NewWithID("msoffice2pdf.desktop")
 	w := a.NewWindow(s.AppTitle)
 	w.Resize(fyne.NewSize(960, 640))
+
+	aboutItem := fyne.NewMenuItem(s.About, func() {
+		msg := fmt.Sprintf("%s\n\n%s\n\nVersion: %s\n%s",
+			version.AppName, version.Description, version.Version, version.Copyright)
+		dialog.ShowInformation(s.AboutTitle, msg, w)
+	})
+	w.SetMainMenu(fyne.NewMainMenu(fyne.NewMenu(s.HelpMenu, aboutItem)))
 
 	statusLabel := widget.NewLabel(s.Status + ": " + s.StatusStopped)
 	configLabel := widget.NewLabel(s.Config + ": " + configPath)
@@ -58,6 +76,7 @@ func runFyne(cfg *config.Config, configPath string, ring *applog.Ring, rt *appru
 	logView := widget.NewMultiLineEntry()
 	logView.Wrapping = fyne.TextWrapOff
 	logView.Disable() // read-only
+	logPanel := container.NewThemeOverride(logView, logViewTheme{Theme: theme.LightTheme()})
 
 	var lastLogText string
 	var busy bool
@@ -200,15 +219,15 @@ func runFyne(cfg *config.Config, configPath string, ring *applog.Ring, rt *appru
 		configLabel,
 	)
 	filters := container.NewHBox(
-		widget.NewLabel(s.Lines), linesEntry,
-		widget.NewLabel(s.Level), levelSelect,
-		widget.NewLabel(s.UID), uidEntry,
-		widget.NewLabel(s.Action), actionEntry,
+		widget.NewLabel(s.Lines), minWidth(linesEntry, filterLinesWidth),
+		widget.NewLabel(s.Level), minWidth(levelSelect, filterLevelWidth),
+		widget.NewLabel(s.UID), minWidth(uidEntry, filterUIDWidth),
+		widget.NewLabel(s.Action), minWidth(actionEntry, filterActionWidth),
 		layout.NewSpacer(),
 		clearBtn,
 	)
 	content := container.NewBorder(header, nil, nil, nil,
-		container.NewBorder(filters, nil, nil, nil, logView),
+		container.NewBorder(filters, nil, nil, nil, logPanel),
 	)
 	w.SetContent(content)
 
@@ -233,13 +252,19 @@ func runFyne(cfg *config.Config, configPath string, ring *applog.Ring, rt *appru
 	}()
 
 	w.SetCloseIntercept(func() {
-		go func() {
-			_ = rt.Stop()
-			fyne.Do(func() {
-				signalDone()
-				w.Close()
-			})
-		}()
+		dialog.ShowConfirm(s.QuitTitle, s.QuitMessage, func(ok bool) {
+			if !ok {
+				return
+			}
+			go func() {
+				_ = rt.Stop()
+				fyne.Do(func() {
+					signalDone()
+					w.SetCloseIntercept(nil)
+					w.Close()
+				})
+			}()
+		}, w)
 	})
 
 	w.ShowAndRun()
@@ -263,4 +288,44 @@ func statusText(s uiStrings, st appruntime.Status) string {
 	default:
 		return st.String()
 	}
+}
+
+// logViewTheme forces white background and black text for the read-only log entry.
+type logViewTheme struct {
+	fyne.Theme
+}
+
+func (t logViewTheme) Color(name fyne.ThemeColorName, variant fyne.ThemeVariant) color.Color {
+	switch name {
+	case theme.ColorNameInputBackground, theme.ColorNameBackground:
+		return color.NRGBA{R: 255, G: 255, B: 255, A: 255}
+	case theme.ColorNameForeground, theme.ColorNameDisabled, theme.ColorNamePlaceHolder:
+		return color.NRGBA{R: 0, G: 0, B: 0, A: 255}
+	default:
+		return t.Theme.Color(name, variant)
+	}
+}
+
+type minWidthLayout struct {
+	width float32
+}
+
+func (m minWidthLayout) Layout(objs []fyne.CanvasObject, size fyne.Size) {
+	if len(objs) == 0 {
+		return
+	}
+	objs[0].Resize(size)
+	objs[0].Move(fyne.NewPos(0, 0))
+}
+
+func (m minWidthLayout) MinSize(objs []fyne.CanvasObject) fyne.Size {
+	h := float32(0)
+	if len(objs) > 0 {
+		h = objs[0].MinSize().Height
+	}
+	return fyne.NewSize(m.width, h)
+}
+
+func minWidth(obj fyne.CanvasObject, width float32) fyne.CanvasObject {
+	return container.New(minWidthLayout{width: width}, obj)
 }

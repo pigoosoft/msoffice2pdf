@@ -21,6 +21,11 @@ type uiStrings struct {
 	StatusRunning   string
 	StatusStopping  string
 	StatusFailed    string
+	QuitTitle       string
+	QuitMessage     string
+	HelpMenu        string
+	About           string
+	AboutTitle      string
 }
 
 func englishStrings() uiStrings {
@@ -40,6 +45,11 @@ func englishStrings() uiStrings {
 		StatusRunning:  "Running",
 		StatusStopping: "Stopping",
 		StatusFailed:   "Failed",
+		QuitTitle:      "Confirm exit",
+		QuitMessage:    "Exit MSOffice2Pdf? A running service will be stopped first.",
+		HelpMenu:       "Help",
+		About:          "About",
+		AboutTitle:     "About MSOffice2Pdf",
 	}
 }
 
@@ -60,6 +70,11 @@ func chineseStrings() uiStrings {
 		StatusRunning:  "运行中",
 		StatusStopping: "停止中",
 		StatusFailed:   "失败",
+		QuitTitle:      "确认退出",
+		QuitMessage:    "确定要退出 MSOffice2Pdf 吗？若服务正在运行将先停止。",
+		HelpMenu:       "帮助",
+		About:          "关于",
+		AboutTitle:     "关于 MSOffice2Pdf",
 	}
 }
 

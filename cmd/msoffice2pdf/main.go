@@ -14,11 +14,17 @@ import (
 	"msoffice2pdf/internal/appruntime"
 	"msoffice2pdf/internal/config"
 	"msoffice2pdf/internal/desktop"
+	"msoffice2pdf/internal/singleinstance"
 	"msoffice2pdf/internal/version"
 )
 
 func main() {
 	configPath, noui, args := parseGlobalConfig(os.Args[1:])
+
+	if len(args) >= 1 && isHelpCommand(args[0]) {
+		printHelp(os.Stdout)
+		return
+	}
 
 	if len(args) == 0 || args[0] == "serve" {
 		runServe(configPath, noui)
@@ -46,8 +52,18 @@ func main() {
 		return
 	}
 
-	printUsage()
+	fmt.Fprintf(os.Stderr, "error: unknown command %q\n\n", args[0])
+	printHelp(os.Stderr)
 	os.Exit(1)
+}
+
+func isHelpCommand(name string) bool {
+	switch name {
+	case "help", "--help", "-h":
+		return true
+	default:
+		return false
+	}
 }
 
 func isVersionCommand(name string) bool {
@@ -60,7 +76,20 @@ func isVersionCommand(name string) bool {
 }
 
 func printVersion() {
-	fmt.Printf("%s\nversion %s\n", version.Copyright, version.Version)
+	fmt.Printf("%s\n", version.AppName)
+	fmt.Printf("Version:     %s\n", version.Version)
+	fmt.Printf("Description: %s\n", version.Description)
+	fmt.Printf("Copyright:   %s\n", version.Copyright)
+}
+
+func logStartupInfo() {
+	slog.Info("msoffice2pdf starting",
+		"app", version.AppName,
+		"version", version.Version,
+		"description", version.Description,
+		"copyright", version.Copyright,
+		"cli_help", "msoffice2pdf help",
+	)
 }
 
 func runServe(configPath string, noui bool) {
@@ -70,32 +99,65 @@ func runServe(configPath string, noui bool) {
 		os.Exit(1)
 	}
 
-	wantUI := desktop.ShouldUseUI(noui, runtime.GOOS, os.Getenv("DISPLAY"))
-	var extras []slog.Handler
-	var ring *applog.Ring
-	if wantUI {
-		ring = applog.NewRing(applog.RingCapDefault)
-		extras = append(extras, ring.Handler(nil))
-	} else if !noui && runtime.GOOS == "linux" {
-		slog.Warn("no display; falling back to console mode")
+	instLock, err := singleinstance.Acquire()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+	defer func() { _ = instLock.Release() }()
+
+	if err := singleinstance.CheckPortFree(cfg.Server.Port); err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
 	}
 
-	logCloser, err := applog.Init(cfg.Log, extras...)
+	// --noui: skip desktop entirely; start HTTP + workers in console mode.
+	if noui {
+		runConsoleServe(cfg)
+		return
+	}
+
+	wantUI := desktop.ShouldUseUI(false, runtime.GOOS, os.Getenv("DISPLAY"))
+	if !wantUI {
+		if runtime.GOOS == "linux" {
+			fmt.Fprintln(os.Stderr, "no display; falling back to console mode")
+		}
+		runConsoleServe(cfg)
+		return
+	}
+
+	ring := applog.NewRing(applog.RingCapDefault)
+	logCloser, err := applog.Init(cfg.Log, ring.Handler(nil))
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "init logger failed: %v\n", err)
 		os.Exit(1)
 	}
 	defer func() { _ = logCloser.Close() }()
 
-	rt := appruntime.New(cfg)
-	if wantUI {
-		if err := desktop.Run(cfg, configPath, ring, rt); err != nil {
-			slog.Error("desktop ui failed; falling back to console", "err", err)
-		} else {
-			return
-		}
-	}
+	logStartupInfo()
 
+	rt := appruntime.New(cfg)
+	if err := desktop.Run(cfg, configPath, ring, rt); err != nil {
+		slog.Error("desktop ui failed; falling back to console", "err", err)
+		runRuntimeUntilSignal(rt)
+	}
+}
+
+func runConsoleServe(cfg *config.Config) {
+	logCloser, err := applog.Init(cfg.Log)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "init logger failed: %v\n", err)
+		os.Exit(1)
+	}
+	defer func() { _ = logCloser.Close() }()
+
+	logStartupInfo()
+
+	rt := appruntime.New(cfg)
+	runRuntimeUntilSignal(rt)
+}
+
+func runRuntimeUntilSignal(rt *appruntime.Runtime) {
 	if err := rt.Start(); err != nil {
 		slog.Error("runtime start failed", "err", err)
 		os.Exit(1)
@@ -134,17 +196,51 @@ func parseGlobalConfig(args []string) (configPath string, noui bool, remaining [
 	return configPath, noui, remaining
 }
 
-func printUsage() {
-	fmt.Fprintf(os.Stderr, `Usage:
-  msoffice2pdf [--config=PATH] [--noui]
-  msoffice2pdf serve [--config=PATH] [--noui]
+func printHelp(w *os.File) {
+	fmt.Fprintf(w, `%s %s
+%s
+%s
+
+Usage:
+  msoffice2pdf [global flags] [command] [command flags]
+
+Global flags:
+  --config=PATH, --config PATH   Config file (default: config/config.yaml)
+  --noui                         Skip desktop shell; start serve in console mode
+  -h, --help, help               Show this help
+  -v, --version, version         Show version and copyright
+
+Commands:
+  (none) / serve                 Start the service (desktop shell by default on Windows /
+                                 Linux with DISPLAY; use --noui for console)
+  help                           Show this help
+  version                        Show version and copyright
+  user create-admin              Create an admin user
+      --uid=UID --pwd=PWD
+  user create                    Create a normal user
+      --uid=UID --pwd=PWD
+  user update                    Update user password and/or role
+      --uid=UID [--pwd=PWD] [--role=admin|user]
+  user reset-token               Rotate API token for a user
+      --uid=UID
+  user deactivate                Freeze a user
+      --uid=UID
+  user activate                  Unfreeze a user
+      --uid=UID
+  convert-worker                 One-shot Office→PDF conversion worker (internal/COM helper)
+      --src=PATH --dst=PATH [--excel-page-fit=fit_width|auto]
+
+Examples:
+  msoffice2pdf
+  msoffice2pdf --noui --config config/config.yaml
+  msoffice2pdf serve --noui
   msoffice2pdf version
-  msoffice2pdf user create-admin --uid=UID --pwd=PWD [--config=PATH]
-  msoffice2pdf user create --uid=UID --pwd=PWD [--config=PATH]
-  msoffice2pdf user update --uid=UID [--pwd=PWD] [--role=admin|user] [--config=PATH]
-  msoffice2pdf user reset-token --uid=UID [--config=PATH]
-  msoffice2pdf user deactivate --uid=UID [--config=PATH]
-  msoffice2pdf user activate --uid=UID [--config=PATH]
-  msoffice2pdf convert-worker --src=PATH --dst=PATH [--excel-page-fit=fit_width|auto]
-`)
+  msoffice2pdf help
+  msoffice2pdf user create-admin --uid=admin --pwd=secret
+`, version.AppName, version.Version, version.Description, version.Copyright)
+}
+
+// printUsage keeps older call sites working (unknown user subcommand, etc.).
+func printUsage() {
+	printHelp(os.Stderr)
 }

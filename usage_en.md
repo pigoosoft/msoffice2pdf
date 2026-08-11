@@ -107,32 +107,40 @@ From the project root. Create the output directory first if needed:
 mkdir -p bin
 ```
 
-**Windows (PowerShell / cmd):**
+**Windows (desktop shell needs CGO + matching `GOARCH`):**
 
-The desktop control shell (Fyne) requires **CGO**. Ensure `GOARCH` matches your toolchain — if `go env GOARCH` is `arm64` but MinGW/CPU are amd64:
+If `go env GOARCH` is `arm64` but your CPU / MinGW toolchain is amd64 (common on Windows ARM64 hosts or mis-set env), build with:
 
-```bash
-GOARCH=amd64 CGO_ENABLED=1 go build -o bin/msoffice2pdf.exe ./cmd/msoffice2pdf
+```powershell
+# PowerShell
+$env:GOARCH='amd64'; $env:CGO_ENABLED='1'; go build -o bin/msoffice2pdf.exe ./cmd/msoffice2pdf
 ```
 
-Otherwise:
+```bat
+REM cmd.exe
+set GOARCH=amd64&& set CGO_ENABLED=1&& go build -o bin/msoffice2pdf.exe ./cmd/msoffice2pdf
+```
 
-```bash
+If `GOARCH` already matches the toolchain:
+
+```powershell
 go build -o bin/msoffice2pdf.exe ./cmd/msoffice2pdf
 ```
 
 **Linux / macOS:**
 
 ```bash
-go build -o bin/msoffice2pdf ./cmd/msoffice2pdf
+CGO_ENABLED=1 go build -o bin/msoffice2pdf ./cmd/msoffice2pdf
 ```
 
 Optional: embed a release version at link time (overrides the default in `internal/version.Version`):
 
-```bash
-# Windows
+```powershell
+# Windows PowerShell (add GOARCH/CGO as above when needed)
 go build -ldflags "-X msoffice2pdf/internal/version.Version=1.2.3" -o bin/msoffice2pdf.exe ./cmd/msoffice2pdf
+```
 
+```bash
 # Linux / macOS
 go build -ldflags "-X msoffice2pdf/internal/version.Version=1.2.3" -o bin/msoffice2pdf ./cmd/msoffice2pdf
 ```
@@ -150,9 +158,23 @@ After a successful build, sanity-check with:
 Example output:
 
 ```text
-Copyright (c) 2026 pigoosoft (pigoosoft@gmail.com)
-version 0.1.0
+MSOffice2Pdf
+Version:     0.1.0
+Description: HTTP service that converts Microsoft Office documents (Word / Excel / PowerPoint) to PDF via Office COM (Windows) or OpenOffice/LibreOffice, preserving layout as much as possible.
+Copyright:   Copyright (c) 2026 pigoosoft (pigoosoft@gmail.com)
 ```
+
+Show all CLI commands:
+
+```bash
+# Windows
+.\bin\msoffice2pdf.exe help
+
+# Linux / macOS
+./bin/msoffice2pdf help
+```
+
+Aliases: `-h`, `--help`.
 
 You can also skip the binary and run from source (see §3.0): `go run ./cmd/msoffice2pdf ...`.
 
@@ -178,6 +200,8 @@ Finish §2.1–2.2 (database and `config/config.yaml`) before starting. For prod
 ### Desktop control shell (default)
 
 By default on **Windows**, and on **Linux when `DISPLAY` is set**, starting `serve` (or no subcommand) opens a **desktop control shell** instead of starting HTTP immediately. Click **Start** to run HTTP + conversion workers + cleanup; **Stop** or close the window to shut down. The window shows filtered live logs from the service.
+
+Only **one** `serve` / default-start process may run on the machine (**Windows / Linux / macOS**). A second launch exits immediately with an error. Startup also fails if `server.port` is already bound (by this app or any other process). `version`, `user *`, and `convert-worker` are not covered by this lock.
 
 | Mode | How | Behavior |
 |------|-----|----------|
@@ -332,12 +356,15 @@ Global flags:
 |------|-------------|
 | `--config=PATH` or `--config PATH` | Config file; default `config/config.yaml` |
 | `--noui` | Skip desktop shell; start HTTP + workers immediately (console mode) |
+| `-h` / `--help` / `help` | Print all CLI commands |
+| `-v` / `--version` / `version` | Print app name, version, and copyright |
 
 ### 4.1 Command overview
 
 ```text
 msoffice2pdf [--config=PATH] [--noui]
 msoffice2pdf serve [--config=PATH] [--noui]
+msoffice2pdf help
 msoffice2pdf version
 msoffice2pdf user create-admin --uid=UID --pwd=PWD [--config=PATH]
 msoffice2pdf user create --uid=UID --pwd=PWD [--config=PATH]
@@ -350,7 +377,8 @@ msoffice2pdf user activate --uid=UID [--config=PATH]
 | Command | Description |
 |---------|-------------|
 | (no args) / `serve` | Start HTTP + queue + Cleanup |
-| `version` (or `-v` / `--version`) | Print copyright and version |
+| `help` (or `-h` / `--help`) | Print full CLI help |
+| `version` (or `-v` / `--version`) | Print app name, version, and copyright |
 | `user create-admin` | Create admin; print `api_token` |
 | `user create` | Create normal user; print `api_token` |
 | `user update` | Change password and/or role (`--pwd` / `--role` at least one); print `uid`, `role` |
