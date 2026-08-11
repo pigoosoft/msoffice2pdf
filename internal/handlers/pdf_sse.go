@@ -64,9 +64,22 @@ func (h *PdfHandler) Events(c *gin.Context) {
 	}
 
 	lastFP := make(map[string]string, len(fileIDs))
+	allTerminal := true
 	for i, id := range fileIDs {
-		_ = writeSSE(c, "status", snapshots[i])
+		if err := writeSSE(c, "status", snapshots[i]); err != nil {
+			return
+		}
 		lastFP[id] = service.StatusFingerprint(snapshots[i])
+		if !service.IsTerminalStatusMap(snapshots[i]) {
+			allTerminal = false
+		}
+	}
+	if allTerminal {
+		_ = writeSSE(c, "done", map[string]interface{}{
+			"reason":  "all_terminal",
+			"fileids": fileIDs,
+		})
+		return
 	}
 
 	maxDur := h.SSE.MaxDuration
