@@ -109,6 +109,14 @@ mkdir -p bin
 
 **Windows (PowerShell / cmd):**
 
+The desktop control shell (Fyne) requires **CGO**. Ensure `GOARCH` matches your toolchain — if `go env GOARCH` is `arm64` but MinGW/CPU are amd64:
+
+```bash
+GOARCH=amd64 CGO_ENABLED=1 go build -o bin/msoffice2pdf.exe ./cmd/msoffice2pdf
+```
+
+Otherwise:
+
 ```bash
 go build -o bin/msoffice2pdf.exe ./cmd/msoffice2pdf
 ```
@@ -166,6 +174,23 @@ expired/  # TTL / failure archives
 ## 3. Running the service
 
 Finish §2.1–2.2 (database and `config/config.yaml`) before starting. For production and day-to-day use, prefer the **binary from §2.3** in the foreground; for local development, §3.0 (`go run`) is fine.
+
+### Desktop control shell (default)
+
+By default on **Windows**, and on **Linux when `DISPLAY` is set**, starting `serve` (or no subcommand) opens a **desktop control shell** instead of starting HTTP immediately. Click **Start** to run HTTP + conversion workers + cleanup; **Stop** or close the window to shut down. The window shows filtered live logs from the service.
+
+| Mode | How | Behavior |
+|------|-----|----------|
+| Desktop shell | default on Windows / Linux+X | Service **stopped** until you click Start |
+| Console | `--noui` | Same as pre-shell behavior: service starts immediately |
+
+Use **`--noui`** for SSH, headless Linux (no X), Task Scheduler / nssm wrappers, or any host without a display:
+
+```bash
+./bin/msoffice2pdf --noui --config config/config.yaml
+```
+
+On Linux without `DISPLAY`, the process auto-falls back to console mode (one log line). `version`, `user *`, and `convert-worker` never open the shell.
 
 ### 3.0 Run from source (development)
 
@@ -306,12 +331,13 @@ Global flags:
 | Flag | Description |
 |------|-------------|
 | `--config=PATH` or `--config PATH` | Config file; default `config/config.yaml` |
+| `--noui` | Skip desktop shell; start HTTP + workers immediately (console mode) |
 
 ### 4.1 Command overview
 
 ```text
-msoffice2pdf [--config=PATH]
-msoffice2pdf serve [--config=PATH]
+msoffice2pdf [--config=PATH] [--noui]
+msoffice2pdf serve [--config=PATH] [--noui]
 msoffice2pdf version
 msoffice2pdf user create-admin --uid=UID --pwd=PWD [--config=PATH]
 msoffice2pdf user create --uid=UID --pwd=PWD [--config=PATH]

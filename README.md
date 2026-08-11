@@ -51,6 +51,18 @@ go build -o bin/msoffice2pdf ./cmd/msoffice2pdf
 ./bin/msoffice2pdf --config config/config.yaml
 ```
 
+On **Windows**, the desktop shell (Fyne) needs **CGO** and a **matching `GOARCH`**. If `go env GOARCH` is `arm64` but your CPU/MinGW toolchain is amd64, build with:
+
+```bash
+GOARCH=amd64 CGO_ENABLED=1 go build -o bin/msoffice2pdf.exe ./cmd/msoffice2pdf
+```
+
+By default on **Windows** (and on **Linux when `DISPLAY` is set**), the process opens a **desktop control shell**. Click **Start** to run HTTP + conversion workers. Use **`--noui`** for classic console mode (starts immediately; suitable for SSH/service wrappers):
+
+```bash
+./bin/msoffice2pdf --noui --config config/config.yaml
+```
+
 5. Health check: `curl -i http://127.0.0.1:8080/health`
 
 ### Create MySQL database
