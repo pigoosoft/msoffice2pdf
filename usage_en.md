@@ -226,7 +226,7 @@ Use the executable from §2.3. By default it loads `config/config.yaml` under th
 ./bin/msoffice2pdf --config config/config.yaml
 ```
 
-On start the process connects to the database, ensures storage dirs, starts the conversion queue and Cleanup timer, and listens for HTTP. When listening begins, besides `addr` in JSON logs (e.g. `:8080`), it prints each local IPv4 URL to the console, for example:
+In **desktop shell** mode (default on Windows / Linux+X), the process only loads config and opens the window until you click **Start**. In **console** mode (`--noui`, or Linux without `DISPLAY`), on start the process connects to the database, ensures storage dirs, starts the conversion queue and Cleanup timer, and listens for HTTP. When listening begins, besides `addr` in JSON logs (e.g. `:8080`), it prints each local IPv4 URL to the console (shell log pane and/or stdout), for example:
 
 ```text
 http://127.0.0.1:8080
@@ -243,7 +243,7 @@ By default only stdout JSON is used. Set `file_enabled: true` under the `log` se
 
 `flush_interval` controls buffered flush; the process forces Sync on exit. Background logs without request Context use actor `System`; missing `action` becomes `-`.
 
-Stop: `Ctrl+C` in the foreground window (SIGINT/SIGTERM). The process stops Cleanup first, then the queue and HTTP.
+Stop: in the desktop shell use **Stop** or close the window; in console mode use `Ctrl+C` (SIGINT/SIGTERM). The process stops HTTP, Cleanup, then the queue.
 
 ### 3.2 Health check
 

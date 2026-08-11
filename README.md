@@ -63,7 +63,7 @@ By default on **Windows** (and on **Linux when `DISPLAY` is set**), the process 
 ./bin/msoffice2pdf --noui --config config/config.yaml
 ```
 
-5. Health check: `curl -i http://127.0.0.1:8080/health`
+5. After the service is running (click **Start** in the desktop shell, or use `--noui`), health-check: `curl -i http://127.0.0.1:8080/health`
 
 ### Create MySQL database
 
