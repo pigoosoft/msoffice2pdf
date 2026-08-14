@@ -392,3 +392,13 @@ watermark:
   # Font file path (TTF/OTF). Type: string. Empty tries system CJK fonts (e.g. Microsoft YaHei).
   # If only TTC is available and load fails, set an explicit usable .ttf.
   font_path: ""
+
+# -----------------------------------------------------------------------------
+# desktop — Fyne control shell (ignored in --noui / console mode)
+# -----------------------------------------------------------------------------
+desktop:
+  # UI language. Type: string. Allowed: en | zh.
+  # Empty/omitted: follow the OS UI language; non-Chinese → en.
+  # Unsupported value → en.
+  # Written when the user picks a language in the desktop shell.
+  language: ""

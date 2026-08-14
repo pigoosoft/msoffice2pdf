@@ -23,6 +23,13 @@ type Config struct {
 	Log       LogConfig       `yaml:"log"`
 	Upload    UploadConfig    `yaml:"upload"`
 	Watermark WatermarkConfig `yaml:"watermark"`
+	Desktop   DesktopConfig   `yaml:"desktop"`
+}
+
+// DesktopConfig is the Fyne control-shell preference. Ignored in --noui / console mode.
+type DesktopConfig struct {
+	// Language is en | zh. Empty/omitted: follow OS (non-Chinese → en). Unsupported → en.
+	Language string `yaml:"language"`
 }
 
 type ServerConfig struct {

@@ -165,3 +165,6 @@ watermark:
   color: "#808080"
   font_size: 25
   font_path: "C:\\Windows\\Fonts\\simhei.ttf"
+
+desktop:
+  language: en

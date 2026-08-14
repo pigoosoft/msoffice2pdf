@@ -13,6 +13,7 @@ import (
 	"msoffice2pdf/internal/applog"
 	"msoffice2pdf/internal/appruntime"
 	"msoffice2pdf/internal/config"
+	"msoffice2pdf/internal/consoleattach"
 	"msoffice2pdf/internal/desktop"
 	"msoffice2pdf/internal/singleinstance"
 	"msoffice2pdf/internal/version"
@@ -22,6 +23,7 @@ func main() {
 	configPath, noui, args := parseGlobalConfig(os.Args[1:])
 
 	if len(args) >= 1 && isHelpCommand(args[0]) {
+		consoleattach.EnsureCLI()
 		printHelp(os.Stdout)
 		return
 	}
@@ -32,11 +34,13 @@ func main() {
 	}
 
 	if len(args) >= 1 && isVersionCommand(args[0]) {
+		consoleattach.EnsureCLI()
 		printVersion()
 		return
 	}
 
 	if len(args) >= 2 && args[0] == "user" {
+		consoleattach.EnsureCLI()
 		if err := runUserCommand(configPath, args[1], args[2:]); err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			os.Exit(1)
@@ -45,6 +49,7 @@ func main() {
 	}
 
 	if len(args) >= 1 && args[0] == "convert-worker" {
+		consoleattach.EnsureCLI()
 		if err := runConvertWorker(args[1:]); err != nil {
 			fmt.Fprintf(os.Stderr, "%v\n", err)
 			os.Exit(2)
@@ -52,6 +57,7 @@ func main() {
 		return
 	}
 
+	consoleattach.EnsureCLI()
 	fmt.Fprintf(os.Stderr, "error: unknown command %q\n\n", args[0])
 	printHelp(os.Stderr)
 	os.Exit(1)
@@ -92,33 +98,42 @@ func logStartupInfo() {
 	)
 }
 
+// exitError attaches a console on Windows GUI builds so the message is visible.
+func exitError(format string, args ...any) {
+	consoleattach.EnsureCLI()
+	fmt.Fprintf(os.Stderr, format, args...)
+	if !strings.HasSuffix(format, "\n") {
+		fmt.Fprintln(os.Stderr)
+	}
+	os.Exit(1)
+}
+
 func runServe(configPath string, noui bool) {
 	cfg, err := config.Load(configPath)
 	if err != nil {
-		slog.Error("load config failed", "err", err)
-		os.Exit(1)
+		exitError("error: load config failed: %v", err)
 	}
 
 	instLock, err := singleinstance.Acquire()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
+		exitError("error: %v", err)
 	}
 	defer func() { _ = instLock.Release() }()
 
 	if err := singleinstance.CheckPortFree(cfg.Server.Port); err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
+		exitError("error: %v", err)
 	}
 
 	// --noui: skip desktop entirely; start HTTP + workers in console mode.
 	if noui {
+		consoleattach.EnsureCLI()
 		runConsoleServe(cfg)
 		return
 	}
 
 	wantUI := desktop.ShouldUseUI(false, runtime.GOOS, os.Getenv("DISPLAY"))
 	if !wantUI {
+		consoleattach.EnsureCLI()
 		if runtime.GOOS == "linux" {
 			fmt.Fprintln(os.Stderr, "no display; falling back to console mode")
 		}
@@ -129,15 +144,16 @@ func runServe(configPath string, noui bool) {
 	ring := applog.NewRing(applog.RingCapDefault)
 	logCloser, err := applog.Init(cfg.Log, ring.Handler(nil))
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "init logger failed: %v\n", err)
-		os.Exit(1)
+		exitError("error: init logger failed: %v", err)
 	}
 	defer func() { _ = logCloser.Close() }()
 
 	logStartupInfo()
 
 	rt := appruntime.New(cfg)
+	consoleattach.DetachForUI()
 	if err := desktop.Run(cfg, configPath, ring, rt); err != nil {
+		consoleattach.EnsureCLI()
 		slog.Error("desktop ui failed; falling back to console", "err", err)
 		runRuntimeUntilSignal(rt)
 	}
@@ -146,8 +162,7 @@ func runServe(configPath string, noui bool) {
 func runConsoleServe(cfg *config.Config) {
 	logCloser, err := applog.Init(cfg.Log)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "init logger failed: %v\n", err)
-		os.Exit(1)
+		exitError("error: init logger failed: %v", err)
 	}
 	defer func() { _ = logCloser.Close() }()
 
@@ -159,6 +174,7 @@ func runConsoleServe(cfg *config.Config) {
 
 func runRuntimeUntilSignal(rt *appruntime.Runtime) {
 	if err := rt.Start(); err != nil {
+		consoleattach.EnsureCLI()
 		slog.Error("runtime start failed", "err", err)
 		os.Exit(1)
 	}
@@ -168,6 +184,7 @@ func runRuntimeUntilSignal(rt *appruntime.Runtime) {
 	<-ctx.Done()
 
 	if err := rt.Stop(); err != nil {
+		consoleattach.EnsureCLI()
 		slog.Error("runtime stop failed", "err", err)
 		os.Exit(1)
 	}

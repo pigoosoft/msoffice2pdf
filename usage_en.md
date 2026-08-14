@@ -108,24 +108,26 @@ From the project root. Create the output directory first if needed:
 mkdir -p bin
 ```
 
-**Windows (desktop shell needs CGO + matching `GOARCH`):**
+**Windows (desktop shell needs CGO + matching `GOARCH` + `-H windowsgui`):**
+
+Use **`-H windowsgui`** so double-click / UI mode does not open a console; closing a console cannot kill the UI process. CLI commands and `--noui` attach or allocate a console at runtime so terminal output still works.
 
 If `go env GOARCH` is `arm64` but your CPU / MinGW toolchain is amd64 (common on Windows ARM64 hosts or mis-set env), build with:
 
 ```powershell
 # PowerShell
-$env:GOARCH='amd64'; $env:CGO_ENABLED='1'; go build -o bin/msoffice2pdf.exe ./cmd/msoffice2pdf
+$env:GOARCH='amd64'; $env:CGO_ENABLED='1'; go build -ldflags="-H windowsgui" -o bin/msoffice2pdf.exe ./cmd/msoffice2pdf
 ```
 
 ```bat
 REM cmd.exe
-set GOARCH=amd64&& set CGO_ENABLED=1&& go build -o bin/msoffice2pdf.exe ./cmd/msoffice2pdf
+set GOARCH=amd64&& set CGO_ENABLED=1&& go build -ldflags="-H windowsgui" -o bin/msoffice2pdf.exe ./cmd/msoffice2pdf
 ```
 
 If `GOARCH` already matches the toolchain:
 
 ```powershell
-go build -o bin/msoffice2pdf.exe ./cmd/msoffice2pdf
+go build -ldflags="-H windowsgui" -o bin/msoffice2pdf.exe ./cmd/msoffice2pdf
 ```
 
 **Linux / macOS:**
@@ -134,11 +136,13 @@ go build -o bin/msoffice2pdf.exe ./cmd/msoffice2pdf
 CGO_ENABLED=1 go build -o bin/msoffice2pdf ./cmd/msoffice2pdf
 ```
 
+On Linux/macOS, UI mode detaches from the launching terminal (closing that terminal does not stop the process). `--noui` and other CLI commands keep normal terminal I/O.
+
 Optional: embed a release version at link time (overrides the default in `internal/version.Version`):
 
 ```powershell
 # Windows PowerShell (add GOARCH/CGO as above when needed)
-go build -ldflags "-X msoffice2pdf/internal/version.Version=1.2.3" -o bin/msoffice2pdf.exe ./cmd/msoffice2pdf
+go build -ldflags "-H windowsgui -X msoffice2pdf/internal/version.Version=1.2.3" -o bin/msoffice2pdf.exe ./cmd/msoffice2pdf
 ```
 
 ```bash
@@ -200,14 +204,16 @@ Finish §2.1–2.2 (database and `config/config.yaml`) before starting. For prod
 
 ### Desktop control shell (default)
 
-By default on **Windows**, and on **Linux when `DISPLAY` is set**, starting `serve` (or no subcommand) opens a **desktop control shell** instead of starting HTTP immediately. Click **Start** to run HTTP + conversion workers + cleanup; **Stop** or close the window to shut down. The window shows filtered live logs from the service.
+By default on **Windows**, on **Linux when `DISPLAY` is set**, and on **macOS**, starting `serve` (or no subcommand) opens a **desktop control shell** instead of starting HTTP immediately. Click **Start** to run HTTP + conversion workers + cleanup; **Stop** or close the window to shut down. The window shows filtered live logs from the service.
+
+UI mode is **not** tied to a console/terminal: Windows release builds use `-H windowsgui` (no black console); on Linux/macOS the process detaches from the launching TTY so closing that terminal does not stop the service. Logs stay in the log file and the shell log pane.
 
 Only **one** `serve` / default-start process may run on the machine (**Windows / Linux / macOS**). A second launch exits immediately with an error. Startup also fails if `server.port` is already bound (by this app or any other process). `version`, `user *`, and `convert-worker` are not covered by this lock.
 
 | Mode | How | Behavior |
 |------|-----|----------|
-| Desktop shell | default on Windows / Linux+X | Service **stopped** until you click Start |
-| Console | `--noui` | Same as pre-shell behavior: service starts immediately |
+| Desktop shell | default on Windows / Linux+X / macOS | Service **stopped** until you click Start; not killed by closing the launch terminal |
+| Console | `--noui` | Same as pre-shell behavior: service starts immediately; uses the terminal |
 
 Use **`--noui`** for SSH, headless Linux (no X), Task Scheduler / nssm wrappers, or any host without a display:
 
