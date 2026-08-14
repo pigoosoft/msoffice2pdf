@@ -51,13 +51,13 @@ go build -o bin/msoffice2pdf ./cmd/msoffice2pdf
 ./bin/msoffice2pdf --config config/config.yaml
 ```
 
-On **Windows**, the desktop shell (Fyne) needs **CGO** and a **matching `GOARCH`**. If `go env GOARCH` is `arm64` but your CPU/MinGW toolchain is amd64, build with:
+On **Windows**, the desktop shell (Fyne) needs **CGO**, a **matching `GOARCH`**, and **`-H windowsgui`** so UI mode has no console window (CLI / `--noui` still attach a console at runtime). If `go env GOARCH` is `arm64` but your CPU/MinGW toolchain is amd64, build with:
 
 ```bash
-GOARCH=amd64 CGO_ENABLED=1 go build -o bin/msoffice2pdf.exe ./cmd/msoffice2pdf
+GOARCH=amd64 CGO_ENABLED=1 go build -ldflags="-H windowsgui" -o bin/msoffice2pdf.exe ./cmd/msoffice2pdf
 ```
 
-By default on **Windows** (and on **Linux when `DISPLAY` is set**), the process opens a **desktop control shell**. Click **Start** to run HTTP + conversion workers. Use **`--noui`** for classic console mode (starts immediately; suitable for SSH/service wrappers):
+By default on **Windows** (and on **Linux when `DISPLAY` is set** / **macOS**), the process opens a **desktop control shell**. Click **Start** to run HTTP + conversion workers. Closing the launching terminal does not stop the UI process. Use **`--noui`** for classic console mode (starts immediately; suitable for SSH/service wrappers):
 
 ```bash
 ./bin/msoffice2pdf --noui --config config/config.yaml

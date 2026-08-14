@@ -13,7 +13,8 @@ func TestShouldUseUI(t *testing.T) {
 		{false, "linux", ":0", true},
 		{false, "linux", "", false},
 		{true, "linux", ":0", false},
-		{false, "darwin", ":0", false},
+		{false, "darwin", "", true},
+		{true, "darwin", "", false},
 	}
 	for _, c := range cases {
 		got := ShouldUseUI(c.noui, c.goos, c.display)

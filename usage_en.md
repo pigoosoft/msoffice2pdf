@@ -1,7 +1,8 @@
 # MSOffice2Pdf Usage Guide
 
-This document covers server installation, foreground operation, CLI user management, and HTTP API usage.  
+This document covers server installation, foreground operation, CLI user management, and HTTP API usage.
 
+Chinese SSE client / server notes: [usage_zh.md](./usage_zh.md). Detailed SSE design: `docs/详细设计说明书.md` §4.4.
 
 ---
 
@@ -107,24 +108,26 @@ From the project root. Create the output directory first if needed:
 mkdir -p bin
 ```
 
-**Windows (desktop shell needs CGO + matching `GOARCH`):**
+**Windows (desktop shell needs CGO + matching `GOARCH` + `-H windowsgui`):**
+
+Use **`-H windowsgui`** so double-click / UI mode does not open a console; closing a console cannot kill the UI process. CLI commands and `--noui` attach or allocate a console at runtime so terminal output still works.
 
 If `go env GOARCH` is `arm64` but your CPU / MinGW toolchain is amd64 (common on Windows ARM64 hosts or mis-set env), build with:
 
 ```powershell
 # PowerShell
-$env:GOARCH='amd64'; $env:CGO_ENABLED='1'; go build -o bin/msoffice2pdf.exe ./cmd/msoffice2pdf
+$env:GOARCH='amd64'; $env:CGO_ENABLED='1'; go build -ldflags="-H windowsgui" -o bin/msoffice2pdf.exe ./cmd/msoffice2pdf
 ```
 
 ```bat
 REM cmd.exe
-set GOARCH=amd64&& set CGO_ENABLED=1&& go build -o bin/msoffice2pdf.exe ./cmd/msoffice2pdf
+set GOARCH=amd64&& set CGO_ENABLED=1&& go build -ldflags="-H windowsgui" -o bin/msoffice2pdf.exe ./cmd/msoffice2pdf
 ```
 
 If `GOARCH` already matches the toolchain:
 
 ```powershell
-go build -o bin/msoffice2pdf.exe ./cmd/msoffice2pdf
+go build -ldflags="-H windowsgui" -o bin/msoffice2pdf.exe ./cmd/msoffice2pdf
 ```
 
 **Linux / macOS:**
@@ -133,11 +136,13 @@ go build -o bin/msoffice2pdf.exe ./cmd/msoffice2pdf
 CGO_ENABLED=1 go build -o bin/msoffice2pdf ./cmd/msoffice2pdf
 ```
 
+On Linux/macOS, UI mode detaches from the launching terminal (closing that terminal does not stop the process). `--noui` and other CLI commands keep normal terminal I/O.
+
 Optional: embed a release version at link time (overrides the default in `internal/version.Version`):
 
 ```powershell
 # Windows PowerShell (add GOARCH/CGO as above when needed)
-go build -ldflags "-X msoffice2pdf/internal/version.Version=1.2.3" -o bin/msoffice2pdf.exe ./cmd/msoffice2pdf
+go build -ldflags "-H windowsgui -X msoffice2pdf/internal/version.Version=1.2.3" -o bin/msoffice2pdf.exe ./cmd/msoffice2pdf
 ```
 
 ```bash
@@ -199,14 +204,16 @@ Finish §2.1–2.2 (database and `config/config.yaml`) before starting. For prod
 
 ### Desktop control shell (default)
 
-By default on **Windows**, and on **Linux when `DISPLAY` is set**, starting `serve` (or no subcommand) opens a **desktop control shell** instead of starting HTTP immediately. Click **Start** to run HTTP + conversion workers + cleanup; **Stop** or close the window to shut down. The window shows filtered live logs from the service.
+By default on **Windows**, on **Linux when `DISPLAY` is set**, and on **macOS**, starting `serve` (or no subcommand) opens a **desktop control shell** instead of starting HTTP immediately. Click **Start** to run HTTP + conversion workers + cleanup; **Stop** or close the window to shut down. The window shows filtered live logs from the service.
+
+UI mode is **not** tied to a console/terminal: Windows release builds use `-H windowsgui` (no black console); on Linux/macOS the process detaches from the launching TTY so closing that terminal does not stop the service. Logs stay in the log file and the shell log pane.
 
 Only **one** `serve` / default-start process may run on the machine (**Windows / Linux / macOS**). A second launch exits immediately with an error. Startup also fails if `server.port` is already bound (by this app or any other process). `version`, `user *`, and `convert-worker` are not covered by this lock.
 
 | Mode | How | Behavior |
 |------|-----|----------|
-| Desktop shell | default on Windows / Linux+X | Service **stopped** until you click Start |
-| Console | `--noui` | Same as pre-shell behavior: service starts immediately |
+| Desktop shell | default on Windows / Linux+X / macOS | Service **stopped** until you click Start; not killed by closing the launch terminal |
+| Console | `--noui` | Same as pre-shell behavior: service starts immediately; uses the terminal |
 
 Use **`--noui`** for SSH, headless Linux (no X), Task Scheduler / nssm wrappers, or any host without a display:
 
@@ -610,6 +617,7 @@ Allowed types and size come from `upload.allowed_exts` and `upload.max_size`. Up
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/api/pdf/:fileid/status` | Conversion status (`upload` first, then `upload_history`; includes `final_status` / `error_code`, etc.) |
+| GET | `/api/pdf/events` | SSE subscribe via `fileid` (comma-separated and/or repeated); events `status` / `ping` / `done`; see `server.sse.*` |
 | GET | `/api/pdf/:fileid/download` | Download PDF (after hard-delete of upload, linked via `upload_history.upload_id`; not ready → 409) |
 | GET | `/api/pdfs` | Current user's PDF list |
 | GET | `/api/admin/pdfs` | Admin: all PDFs |
@@ -618,11 +626,80 @@ Queue status flow: `pending` → `queued` → `converting` → `failed` (awaitin
 
 Status / list JSON includes `warn_code` (empty or `WARN_WATERMARK`). Polling `status` also returns `warn_code` when a pdf row exists.
 
+#### Conversion status SSE (client + server)
+
+Use SSE when you want push updates for one or many uploads instead of polling `GET /api/pdf/:fileid/status`. Polling remains supported.
+
+**Endpoint:** `GET /api/pdf/events`  
+**Auth:** same as other API calls (`X-UID` + `X-Token`, or Web session cookie).  
+**Query `fileid` (required):** both forms are accepted and may be mixed; values are trimmed and deduped; count must be `1 … server.sse.max_fileids` (default 50).
+
+| Form | Example |
+|------|---------|
+| Repeated | `?fileid=aaa&fileid=bbb` |
+| Comma-separated | `?fileid=aaa,bbb,ccc` |
+
+Any unknown / forbidden `fileid` fails the whole request **before** the stream opens (JSON `404` / `403`); there is no half-open subscription.
+
+**Events (`text/event-stream`):**
+
+| `event` | When | `data` |
+|---------|------|--------|
+| `status` | Immediately once per subscribed `fileid` (snapshot), then again when status fingerprint changes | Same JSON shape as `GET /api/pdf/:fileid/status` (`fileid`, `request_id`, `status`, `final_status`, `error_*`, `retry_count`, `warn_code`, …) |
+| `ping` | Every `server.sse.heartbeat_interval` (default `15s`) | `{}` (ignore) |
+| `done` | Stream ends | `{"reason":"all_terminal","fileids":[…]}` or `{"reason":"max_duration","fileids":[…],"pending":[…]}` |
+
+Map UI rows by `request_id` / `fileid`. After `done`, reconnect with the same (or remaining) `fileid`s if you still need updates.
+
+**Server operating model (summary):**
+
+1. Preflight: resolve + ACL every `fileid` via the same logic as status API.  
+2. Clear this connection’s write deadline so global `server.write_timeout` (e.g. 60s) does **not** kill the stream.  
+3. Emit snapshot `status` events; if all are already terminal, emit `done(all_terminal)` and close.  
+4. Loop: every `poll_interval` (default `1s`) re-query DB; emit `status` only when fingerprint `(status, retry_count, error_msg, final_status, error_code, warn_code)` changes; send `ping` on heartbeat.  
+5. Close with `done` when every file is **terminal** (archived `final_status` = `completed` / `failed` / `deleted`) or when `max_duration` (default **5m**) elapses. Live queue `failed` awaiting retry is **not** terminal.
+
+Config (`config.yaml` / templates):
+
+```yaml
+server:
+  sse:
+    max_duration: 5m        # SSE business timeout (not office_timeout)
+    heartbeat_interval: 15s
+    poll_interval: 1s
+    max_fileids: 50
+```
+
+**curl examples:**
+
 ```bash
 # poll status
 curl -s http://127.0.0.1:8080/api/pdf/<fileid>/status \
   -H "X-UID: u1" -H "X-Token: <api_token>"
 
+# SSE — repeated fileid=
+curl -N "http://127.0.0.1:8080/api/pdf/events?fileid=<id1>&fileid=<id2>" \
+  -H "X-UID: u1" -H "X-Token: <api_token>"
+
+# SSE — comma-separated fileid=
+curl -N "http://127.0.0.1:8080/api/pdf/events?fileid=<id1>,<id2>" \
+  -H "X-UID: u1" -H "X-Token: <api_token>"
+```
+
+**Local smoke client** (`testdata/sse_smoke`, gitignored sample Office files + tool): uploads `1.*`…`8.*` with `X-Request-ID` `1`…`8`, then prints SSE events to the console.
+
+```bash
+# repo root
+go run ./testdata/sse_smoke
+
+# or from testdata/
+go run ./sse_smoke
+
+# optional: -base -uid -token -dir -from -to -comma
+go run ./sse_smoke -comma   # use ?fileid=a,b,c instead of repeated fileid=
+```
+
+```bash
 # download PDF (-o sets save-as name; or -OJ for Content-Disposition name)
 curl -s -o report.pdf http://127.0.0.1:8080/api/pdf/<fileid>/download \
   -H "X-UID: u1" -H "X-Token: <api_token>"
@@ -689,6 +766,7 @@ curl -s -o "./out-$FILEID.pdf" "$BASE/api/pdf/$FILEID/download" \
 | Topic | Notes |
 |-------|-------|
 | Conversion queue | `converter.worker_count` / `queue_size` / `office_timeout` / `requeue_interval` / `retry_count` / `retry_interval` / `excel_page_fit` / `com_mode` / `temp_sandbox` / `engines` / `ext_engines` / `openoffice` |
+| Status SSE | `server.sse.max_duration` / `heartbeat_interval` / `poll_interval` / `max_fileids`; endpoint `GET /api/pdf/events` (see §5.6) |
 | PDF watermark | `watermark.text` / `angle` / `density` / `opacity` / `color` / `font_size` / `font_path`; upload form secondary field `watermark` |
 | TTL cleanup | `cleanup.history_ttl_enabled` / `history_ttl` / `history_ttl_delete_row` / `pdf_ttl` / `interval`; one run at startup; terminal uploads use immediate `ArchiveUpload` (**not** `upload_ttl`); user deletes go to `trash/`, **no** trash TTL |
 | Account freeze | `user.status`: `0` active, `1` frozen |

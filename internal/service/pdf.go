@@ -1,6 +1,7 @@
 package service
 
 import (
+	"fmt"
 	"os"
 	"strings"
 	"time"
@@ -106,6 +107,42 @@ func fillPdfFields(out map[string]interface{}, pdf *domain.Pdf, status string) {
 		out["pdf_filename"] = ""
 		out["warn_code"] = ""
 	}
+}
+
+// StatusFingerprint builds a stable string for SSE change detection.
+func StatusFingerprint(data map[string]interface{}) string {
+	get := func(k string) string {
+		if v, ok := data[k]; ok && v != nil {
+			return fmt.Sprint(v)
+		}
+		return ""
+	}
+	return strings.Join([]string{
+		get("status"),
+		get("retry_count"),
+		get("error_msg"),
+		get("final_status"),
+		get("error_code"),
+		get("warn_code"),
+	}, "|")
+}
+
+// IsTerminalStatusMap reports whether a Status() payload is archived/finished.
+// Live upload rows (including failed-awaiting-retry) are never terminal.
+func IsTerminalStatusMap(data map[string]interface{}) bool {
+	if data == nil {
+		return false
+	}
+	fs, _ := data["final_status"].(string)
+	switch fs {
+	case domain.UploadStatusCompleted, domain.UploadStatusFailed, domain.UploadStatusDeleted:
+		return true
+	}
+	// History path sets status == final_status; live path has no final_status.
+	if _, hasFinal := data["final_status"]; hasFinal && fs != "" {
+		return true
+	}
+	return false
 }
 
 func (s *PdfService) Download(viewer *domain.User, fileID, ip, ua string) (absPath, filename string, err error) {

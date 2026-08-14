@@ -7,7 +7,7 @@ func ShouldUseUI(noui bool, goos, displayEnv string) bool {
 		return false
 	}
 	switch goos {
-	case "windows":
+	case "windows", "darwin":
 		return true
 	case "linux":
 		return strings.TrimSpace(displayEnv) != ""

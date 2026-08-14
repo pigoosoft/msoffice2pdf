@@ -3,29 +3,32 @@ package desktop
 import (
 	"os"
 	"strings"
+
+	"msoffice2pdf/internal/config"
 )
 
 type uiStrings struct {
-	AppTitle        string
-	Status          string
-	Start           string
-	Stop            string
-	Lines           string
-	Level           string
-	UID             string
-	Action          string
-	ClearLogs       string
-	Config          string
-	StatusStopped   string
-	StatusStarting  string
-	StatusRunning   string
-	StatusStopping  string
-	StatusFailed    string
-	QuitTitle       string
-	QuitMessage     string
-	HelpMenu        string
-	About           string
-	AboutTitle      string
+	AppTitle       string
+	Status         string
+	Start          string
+	Stop           string
+	Lines          string
+	Level          string
+	UID            string
+	Action         string
+	ClearLogs      string
+	Config         string
+	Language       string
+	StatusStopped  string
+	StatusStarting string
+	StatusRunning  string
+	StatusStopping string
+	StatusFailed   string
+	QuitTitle      string
+	QuitMessage    string
+	HelpMenu       string
+	About          string
+	AboutTitle     string
 }
 
 func englishStrings() uiStrings {
@@ -40,6 +43,7 @@ func englishStrings() uiStrings {
 		Action:         "Action",
 		ClearLogs:      "Clear logs",
 		Config:         "Config",
+		Language:       "Language",
 		StatusStopped:  "Stopped",
 		StatusStarting: "Starting",
 		StatusRunning:  "Running",
@@ -65,6 +69,7 @@ func chineseStrings() uiStrings {
 		Action:         "动作",
 		ClearLogs:      "清空日志",
 		Config:         "配置",
+		Language:       "语言",
 		StatusStopped:  "已停止",
 		StatusStarting: "启动中",
 		StatusRunning:  "运行中",
@@ -78,11 +83,26 @@ func chineseStrings() uiStrings {
 	}
 }
 
-func loadStrings() uiStrings {
-	if isChineseLocale() {
+func stringsFor(lang string) uiStrings {
+	if lang == config.DesktopLangZH {
 		return chineseStrings()
 	}
 	return englishStrings()
+}
+
+// resolveLanguage: saved config → OS → en. Unsupported config value → en.
+func resolveLanguage(cfgLang string) string {
+	if strings.TrimSpace(cfgLang) == "" {
+		if isChineseLocale() {
+			return config.DesktopLangZH
+		}
+		return config.DesktopLangEN
+	}
+	lang, ok := config.NormalizeDesktopLanguage(cfgLang)
+	if !ok {
+		return config.DesktopLangEN
+	}
+	return lang
 }
 
 func isChineseLocale() bool {

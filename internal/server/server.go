@@ -90,7 +90,7 @@ func New(d Deps) *Server {
 		HistoryRepo: historyRepo,
 	}
 	uploadHandler := &handlers.UploadHandler{Svc: uploadSvc}
-	pdfHandler := &handlers.PdfHandler{Svc: pdfSvc}
+	pdfHandler := &handlers.PdfHandler{Svc: pdfSvc, SSE: cfg.Server.SSE}
 	historyHandler := &handlers.HistoryHandler{UploadSvc: uploadSvc, PdfSvc: pdfSvc}
 
 	if cfg.Upload.MaxSizeBytes > 0 {
@@ -137,6 +137,7 @@ func New(d Deps) *Server {
 		uploadGroup.GET("/upload/:fileid/download", uploadHandler.Download)
 		uploadGroup.DELETE("/upload/:fileid", uploadHandler.Delete)
 
+		uploadGroup.GET("/pdf/events", pdfHandler.Events)
 		uploadGroup.GET("/pdf/:fileid/status", pdfHandler.Status)
 		uploadGroup.GET("/pdf/:fileid/download", pdfHandler.Download)
 		uploadGroup.GET("/pdfs", pdfHandler.ListMine)

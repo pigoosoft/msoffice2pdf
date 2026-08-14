@@ -30,6 +30,10 @@ const (
 	filterLevelWidth  float32 = 110
 	filterUIDWidth    float32 = 160
 	filterActionWidth float32 = 160
+	filterLangWidth   float32 = 100
+
+	langOptionEN = "EN"
+	langOptionZH = "ZH"
 )
 
 func runFyne(cfg *config.Config, configPath string, ring *applog.Ring, rt *appruntime.Runtime) (err error) {
@@ -39,8 +43,8 @@ func runFyne(cfg *config.Config, configPath string, ring *applog.Ring, rt *appru
 		}
 	}()
 
-	_ = cfg
-	s := loadStrings()
+	lang := resolveLanguage(cfg.Desktop.Language)
+	s := stringsFor(lang)
 
 	a := app.NewWithID("msoffice2pdf.desktop")
 	w := a.NewWindow(s.AppTitle)
@@ -55,6 +59,7 @@ func runFyne(cfg *config.Config, configPath string, ring *applog.Ring, rt *appru
 
 	statusLabel := widget.NewLabel(s.Status + ": " + s.StatusStopped)
 	configLabel := widget.NewLabel(s.Config + ": " + configPath)
+	langLabel := widget.NewLabel(s.Language)
 
 	startBtn := widget.NewButton(s.Start, nil)
 	stopBtn := widget.NewButton(s.Stop, nil)
@@ -72,6 +77,14 @@ func runFyne(cfg *config.Config, configPath string, ring *applog.Ring, rt *appru
 	actionEntry.SetPlaceHolder(s.Action)
 
 	clearBtn := widget.NewButton(s.ClearLogs, nil)
+
+	linesLabel := widget.NewLabel(s.Lines)
+	levelLabel := widget.NewLabel(s.Level)
+	uidLabel := widget.NewLabel(s.UID)
+	actionLabel := widget.NewLabel(s.Action)
+
+	langSelect := widget.NewSelect([]string{langOptionEN, langOptionZH}, nil)
+	langSelect.SetSelected(optionFromLang(lang))
 
 	logView := widget.NewMultiLineEntry()
 	logView.Wrapping = fyne.TextWrapOff
@@ -98,6 +111,45 @@ func runFyne(cfg *config.Config, configPath string, ring *applog.Ring, rt *appru
 			stopBtn.Disable()
 		}
 		statusLabel.SetText(s.Status + ": " + statusText(s, st))
+	}
+
+	var applyingLang bool
+	applyLanguage := func(next string) {
+		lang = next
+		s = stringsFor(lang)
+		w.SetTitle(s.AppTitle)
+		aboutItem.Label = s.About
+		w.SetMainMenu(fyne.NewMainMenu(fyne.NewMenu(s.HelpMenu, aboutItem)))
+		startBtn.SetText(s.Start)
+		stopBtn.SetText(s.Stop)
+		linesLabel.SetText(s.Lines)
+		levelLabel.SetText(s.Level)
+		uidLabel.SetText(s.UID)
+		actionLabel.SetText(s.Action)
+		uidEntry.SetPlaceHolder(s.UID)
+		actionEntry.SetPlaceHolder(s.Action)
+		clearBtn.SetText(s.ClearLogs)
+		configLabel.SetText(s.Config + ": " + configPath)
+		langLabel.SetText(s.Language)
+		applyingLang = true
+		langSelect.SetSelected(optionFromLang(lang))
+		applyingLang = false
+		updateButtons()
+	}
+
+	langSelect.OnChanged = func(sel string) {
+		if applyingLang {
+			return
+		}
+		next := langFromOption(sel)
+		if next == lang {
+			return
+		}
+		applyLanguage(next)
+		cfg.Desktop.Language = next
+		if err := config.SetDesktopLanguage(configPath, next); err != nil {
+			slog.Error("save desktop.language failed", "err", err)
+		}
 	}
 
 	startBtn.OnTapped = func() {
@@ -216,13 +268,13 @@ func runFyne(cfg *config.Config, configPath string, ring *applog.Ring, rt *appru
 	header := container.NewBorder(
 		nil, nil,
 		container.NewHBox(statusLabel, startBtn, stopBtn),
-		configLabel,
+		container.NewHBox(langLabel, minWidth(langSelect, filterLangWidth), configLabel),
 	)
 	filters := container.NewHBox(
-		widget.NewLabel(s.Lines), minWidth(linesEntry, filterLinesWidth),
-		widget.NewLabel(s.Level), minWidth(levelSelect, filterLevelWidth),
-		widget.NewLabel(s.UID), minWidth(uidEntry, filterUIDWidth),
-		widget.NewLabel(s.Action), minWidth(actionEntry, filterActionWidth),
+		linesLabel, minWidth(linesEntry, filterLinesWidth),
+		levelLabel, minWidth(levelSelect, filterLevelWidth),
+		uidLabel, minWidth(uidEntry, filterUIDWidth),
+		actionLabel, minWidth(actionEntry, filterActionWidth),
 		layout.NewSpacer(),
 		clearBtn,
 	)
@@ -271,6 +323,20 @@ func runFyne(cfg *config.Config, configPath string, ring *applog.Ring, rt *appru
 	signalDone()
 	_ = rt.Stop()
 	return err
+}
+
+func optionFromLang(lang string) string {
+	if lang == config.DesktopLangZH {
+		return langOptionZH
+	}
+	return langOptionEN
+}
+
+func langFromOption(sel string) string {
+	if sel == langOptionZH {
+		return config.DesktopLangZH
+	}
+	return config.DesktopLangEN
 }
 
 func statusText(s uiStrings, st appruntime.Status) string {

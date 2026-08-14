@@ -2,6 +2,12 @@
   port: 8080
   read_timeout: 30s
   write_timeout: 60s
+  # SSE conversion status stream (GET /api/pdf/events)
+  sse:
+    max_duration: 5m
+    heartbeat_interval: 15s
+    poll_interval: 1s
+    max_fileids: 50
 
 database:
   driver: mysql  # mysql or postgres
@@ -151,7 +157,7 @@ upload:
     - "*.dpt"
 
 watermark:
-  text: "PigooSoft"
+  text: ""
   angle: 45
   density: light
   density_count: 0
@@ -159,3 +165,6 @@ watermark:
   color: "#808080"
   font_size: 25
   font_path: "C:\\Windows\\Fonts\\simhei.ttf"
+
+desktop:
+  language: en

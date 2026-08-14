@@ -23,12 +23,27 @@ type Config struct {
 	Log       LogConfig       `yaml:"log"`
 	Upload    UploadConfig    `yaml:"upload"`
 	Watermark WatermarkConfig `yaml:"watermark"`
+	Desktop   DesktopConfig   `yaml:"desktop"`
+}
+
+// DesktopConfig is the Fyne control-shell preference. Ignored in --noui / console mode.
+type DesktopConfig struct {
+	// Language is en | zh. Empty/omitted: follow OS (non-Chinese → en). Unsupported → en.
+	Language string `yaml:"language"`
 }
 
 type ServerConfig struct {
 	Port         int           `yaml:"port"`
 	ReadTimeout  time.Duration `yaml:"read_timeout"`
 	WriteTimeout time.Duration `yaml:"write_timeout"`
+	SSE          SSEConfig     `yaml:"sse"`
+}
+
+type SSEConfig struct {
+	MaxDuration       time.Duration `yaml:"max_duration"`
+	HeartbeatInterval time.Duration `yaml:"heartbeat_interval"`
+	PollInterval      time.Duration `yaml:"poll_interval"`
+	MaxFileIDs        int           `yaml:"max_fileids"`
 }
 
 type DatabaseConfig struct {
@@ -329,6 +344,24 @@ func (c *Config) Validate() error {
 	}
 	if c.Server.Port <= 0 {
 		return fmt.Errorf("server.port must be > 0")
+	}
+	if c.Server.SSE.MaxDuration <= 0 {
+		c.Server.SSE.MaxDuration = 5 * time.Minute
+	}
+	if c.Server.SSE.HeartbeatInterval <= 0 {
+		c.Server.SSE.HeartbeatInterval = 15 * time.Second
+	}
+	if c.Server.SSE.PollInterval <= 0 {
+		c.Server.SSE.PollInterval = time.Second
+	}
+	if c.Server.SSE.MaxFileIDs <= 0 {
+		c.Server.SSE.MaxFileIDs = 50
+	}
+	if c.Server.SSE.PollInterval >= c.Server.SSE.MaxDuration {
+		return fmt.Errorf("server.sse.poll_interval must be < server.sse.max_duration")
+	}
+	if c.Server.SSE.HeartbeatInterval >= c.Server.SSE.MaxDuration {
+		return fmt.Errorf("server.sse.heartbeat_interval must be < server.sse.max_duration")
 	}
 	if c.Storage.UploadDir == "" || c.Storage.OutputDir == "" ||
 		c.Storage.TrashDir == "" || c.Storage.ExpiredDir == "" {
