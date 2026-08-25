@@ -1,6 +1,76 @@
 # MSOffice2Pdf 使用说明（中文）
 
-完整安装、CLI、API 英文版见 [usage_en.md](./usage_en.md)。本文补充 **转换状态 SSE** 的客户端用法与服务端运行原理（与英文 §5.6 对齐）。
+完整安装、CLI、API 英文版见 [usage_en.md](./usage_en.md)。中文安装与接口全文见 [docs/usage.md](./docs/usage.md)。
+
+本文包含：**新机器部署所需支持**（与英文 §1.2 对齐），以及 **转换状态 SSE**（与英文 §5.6 对齐）。
+
+---
+
+## 新系统部署：需要哪些支持
+
+目标机器 **不必安装 Go**。Go 只在**编译** exe 的那台电脑上需要。把编好的程序和配置拷到新系统即可。
+
+`convert-worker` 不是单独软件，而是**同一个 exe** 再拉起自己（`msoffice2pdf convert-worker …`）。不要再拷一份 worker。
+
+### 需要拷贝的文件
+
+| 项 | 是否必须 | 说明 |
+|----|----------|------|
+| `msoffice2pdf.exe`（Windows）或 `msoffice2pdf`（Linux/macOS） | 是 | 必须与目标机 **操作系统 + CPU 架构** 一致（例如 Windows amd64 的 exe 跑在 64 位 Windows 上）。ARM64 Windows 上不能直接跑 amd64 包，除非系统提供模拟。 |
+| `config/config.yaml` | 是 | 从模板复制后修改；至少配置 `database.dsn`、`auth.jwt_secret`。详见英文 §2.2 / [docs/usage.md](./docs/usage.md) §2.2。 |
+| `upload` / `output` / `trash` / `expired` | 否 | 首次启动会按 `storage.*` 自动建目录。 |
+| 水印字体 | 若配置了路径 | `watermark.font_path` 指向的文件必须在新机器上存在（如 `C:\Windows\Fonts\simhei.ttf`），否则改配置。 |
+| Web 静态资源 `ui/dist` | 仅当自行托管前端 | HTTP API 在 exe 内。浏览器界面是独立的 Vite 产物；生产上常用 Nginx 托管 `ui/dist`，并把 `/api` 反代到本服务。 |
+
+### 新机器上要安装的软件
+
+只装 **`converter.engines` 里真正启用的引擎**。未安装 Microsoft Office / WPS 时 **不要** 把 `msoffice` / `wpsoffice` 写进 `engines`：启动会做 ProgID 探测，失败则 **直接退出**。
+
+| 需求 | 安装 / 配置 |
+|------|-------------|
+| 操作系统 | COM 转换：**Windows 10 / Windows Server 2016+**。Linux / macOS：只能启用 `openoffice` 和/或 `ofd`（没有 Microsoft Office COM）。 |
+| 数据库 | **MySQL 8.0+** 或 **PostgreSQL 14+**，本机或远程均可。空库即可：首次启动 GORM 自动建表。运行 exe 的机器必须能连上 `database.dsn`。 |
+| 引擎 `msoffice` | 已授权的 **Microsoft Office 2016+**（含 Word、Excel、PowerPoint）。 |
+| 引擎 `wpsoffice` | **WPS Office**（文字 / 表格 / 演示对应 ProgID）。 |
+| 引擎 `openoffice` | **LibreOffice 或 Apache OpenOffice**；配置 `converter.openoffice.command`（如 `soffice.exe`）和 `user_profile`。 |
+| 引擎 `ofd` | **不用另装。** OFD→PDF 已编进二进制（`internal/ofd` + [zc310/ofd](https://github.com/zc310/ofd)）。 |
+| 桌面控制窗（Windows 默认） | 普通带桌面的会话（OpenGL）。无界面 / Server Core：用 **`--noui`**。 |
+| CGO 编出的 Windows exe 无法启动 | 安装对应的 **Visual C++ 可再发行组件**（amd64 包装 x64）。多数桌面系统已有。 |
+
+### 新机器上不必装
+
+- **Go**、Git、C 编译器（除非还要在那台机器上从源码编译）
+- **Node.js** / npm（除非还要在那台机器上重新构建 Web UI）
+- 未启用的引擎对应的 Office / WPS / LibreOffice
+- 第二个名为 convert-worker 的程序
+
+### 新机器上第一次启动
+
+服务器 / 无界面推荐控制台模式（立刻起 HTTP 与 Worker）：
+
+```powershell
+.\msoffice2pdf.exe serve --noui --config config\config.yaml
+```
+
+```bash
+./msoffice2pdf serve --noui --config config/config.yaml
+```
+
+同一 exe 创建管理员（仍不需要 Go）：
+
+```powershell
+.\msoffice2pdf.exe user create-admin --uid=admin --pwd=secret --config config\config.yaml
+```
+
+健康检查：`curl -i http://127.0.0.1:8080/health`（端口见 `server.port`）。
+
+Windows 上不加 `--noui` 会打开 **桌面控制窗口**，要点 **Start** 才会监听 HTTP；日志在窗口里，不一定出现在 PowerShell。
+
+每台机器只允许 **一个** serve 进程；`server.port` 已被占用时启动失败。
+
+### DCOM（仅当 COM 跑在无交互会话时）
+
+已登录用户前台或 `--noui` 通常不必再配 DCOM。若以后用 Windows 服务（Session 0）跑 COM，需按 [usage_en.md](./usage_en.md) §1.1 / [docs/usage.md](./docs/usage.md) §1.1 用 `dcomcnfg` 为 Word / Excel / PowerPoint 设置 Identity（This User）。
 
 ---
 

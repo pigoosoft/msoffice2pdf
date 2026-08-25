@@ -2,7 +2,7 @@
 
 This document covers server installation, foreground operation, CLI user management, and HTTP API usage.
 
-Chinese SSE client / server notes: [usage_zh.md](./usage_zh.md). Detailed SSE design: `docs/详细设计说明书.md` §4.4.
+Chinese notes (new-machine support + SSE): [usage_zh.md](./usage_zh.md). Full Chinese install/API: [docs/usage.md](./docs/usage.md). SSE design: `docs/详细设计说明书.md` §4.4.
 
 ---
 
@@ -25,6 +25,72 @@ Office COM is restricted in non-interactive sessions. If you later run as a Wind
 4. Set **Identity** to **This User**, and enter a Windows account with interactive rights (and password)
 
 The current release primarily runs as a foreground process; Windows service install (`service install`) is not provided yet.
+
+### 1.2 Running a prebuilt binary on a new machine
+
+**Go is not required** on the target host. The compiler is only needed where you **build** the binary. Copy the exe (and config) to the new machine.
+
+`convert-worker` is **the same executable** spawned as a child (`msoffice2pdf convert-worker …`). Do not ship a second binary.
+
+#### What to copy
+
+| Item | Required | Notes |
+|------|----------|--------|
+| `msoffice2pdf.exe` (Windows) or `msoffice2pdf` (Linux/macOS) | Yes | Built for the **same OS and CPU** as the target (e.g. Windows amd64 exe on 64-bit Windows). An amd64 build will not run on native ARM64 Windows without emulation. |
+| `config/config.yaml` | Yes | Copy a template and edit; see §2.2. At minimum `database.dsn` and `auth.jwt_secret`. |
+| Storage directories (`upload` / `output` / `trash` / `expired`) | No | Created on first start if missing. Paths come from `storage.*`. |
+| Watermark font file | If configured | If `watermark.font_path` is set (e.g. `C:\Windows\Fonts\simhei.ttf`), that file must exist on the new machine, or change the path. |
+| Web UI static files (`ui/dist`) | Only if you host the Vue UI yourself | The API lives in the exe. The browser UI is a separate Vite build; typical production setup is Nginx (or similar) serving `ui/dist` and proxying `/api` to the exe. |
+
+#### Software to install on the new machine
+
+Install only what your `converter.engines` list actually uses. **Do not** enable a COM engine (`msoffice` / `wpsoffice`) unless that product is installed: startup probes ProgIDs and **exits** on failure.
+
+| Need | Install / configure |
+|------|---------------------|
+| OS | **Windows 10 / Windows Server 2016+** for COM engines. Linux / macOS: use `openoffice` and/or `ofd` only (no Microsoft Office COM). |
+| Database | **MySQL 8.0+** or **PostgreSQL 14+**, local or remote. Empty database is fine: first start auto-migrates tables. The host running the exe must be able to reach `database.dsn`. |
+| Engine `msoffice` | Licensed **Microsoft Office 2016+** with Word, Excel, and PowerPoint. |
+| Engine `wpsoffice` | **WPS Office** (Writer / Spreadsheet / Presentation ProgIDs). |
+| Engine `openoffice` | **LibreOffice** or **Apache OpenOffice**; set `converter.openoffice.command` (e.g. `soffice.exe`) and `user_profile`. |
+| Engine `ofd` | **Nothing extra.** OFD→PDF is compiled into the binary (`internal/ofd` + [zc310/ofd](https://github.com/zc310/ofd)). |
+| Desktop shell (default on Windows) | A normal interactive desktop (OpenGL). Headless / Server Core: use **`--noui`**. |
+| CGO-built Windows exe fails to start | Install the matching **Microsoft Visual C++ Redistributable** (x64 for an amd64 build). Most desktop PCs already have it. |
+
+#### What you do **not** install on the target
+
+- **Go**, Git, or a C compiler (unless you compile on that machine).
+- **Node.js** / npm (unless you rebuild the Web UI there).
+- Office / WPS / LibreOffice if that engine is **not** in `converter.engines`.
+- A second `convert-worker` program.
+
+#### First boot on the new machine
+
+Console mode (recommended for servers; starts HTTP + workers immediately):
+
+```powershell
+.\msoffice2pdf.exe serve --noui --config config\config.yaml
+```
+
+```bash
+./msoffice2pdf serve --noui --config config/config.yaml
+```
+
+Then create an admin (same exe; still no Go):
+
+```powershell
+.\msoffice2pdf.exe user create-admin --uid=admin --pwd=secret --config config\config.yaml
+```
+
+Health check: `curl -i http://127.0.0.1:8080/health` (port from `server.port`).
+
+Without `--noui` on Windows, a **desktop control window** opens; HTTP does not listen until you click **Start**. Logs appear in that window, not necessarily in the terminal.
+
+Only **one** serve process is allowed per machine. If the configured port is already in use, startup fails.
+
+#### DCOM (only if COM runs without an interactive session)
+
+Foreground desktop / `--noui` under a logged-on user usually needs no extra DCOM setup. If you later wrap the process as a Windows service (Session 0), configure DCOM Identity for Word / Excel / PowerPoint as in §1.1.
 
 ---
 
