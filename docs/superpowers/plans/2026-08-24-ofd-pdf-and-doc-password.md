@@ -1,5 +1,7 @@
 # OFD→PDF and Document Password Implementation Plan
 
+> **Superseded** by [2026-08-25-ofd-pdf-public-library.md](./2026-08-25-ofd-pdf-public-library.md) (`pkg/ofd` public library). Do not implement this file.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Add a self-hosted `ofd` conversion engine (GB/T 33190 → PDF, hybrid vector/raster) that always runs in `convert-worker`, plus a generic document-password path (Header + web form) for every engine.
