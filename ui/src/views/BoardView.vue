@@ -8,6 +8,7 @@ import ActionsColToggle from '@/components/ActionsColToggle.vue'
 import { listUploads, deleteUpload, type UploadItem } from '@/api/upload'
 import { getStatus, downloadPdf } from '@/api/pdf'
 import type { Envelope } from '@/api/types'
+import { formatDocPasswordError } from '@/i18n/docPasswordError'
 
 const ACTIVE = new Set(['pending', 'queued', 'converting'])
 
@@ -75,7 +76,8 @@ async function notifyLeft(prev: Set<string>, nextItems: UploadItem[]) {
             showClose: true,
           })
         } else if (status === 'failed') {
-          ElMessage.error(t('board.convertFailed', { msg: st.error_msg || fileid }))
+          const mapped = formatDocPasswordError(st.error_code, st.error_msg)
+          ElMessage.error(t('board.convertFailed', { msg: mapped === '-' ? fileid : mapped }))
         }
       } catch {
         // ignore status miss after archive race

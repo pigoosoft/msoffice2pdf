@@ -42,7 +42,7 @@ type UploadService struct {
 
 const maxRequestIDLen = 128
 
-func (s *UploadService) Upload(user *domain.User, filename string, declaredSize int64, r io.Reader, watermarkText, requestID string) (*domain.Upload, error) {
+func (s *UploadService) Upload(user *domain.User, filename string, declaredSize int64, r io.Reader, watermarkText, requestID, docPassword string) (*domain.Upload, error) {
 	filename = filepath.Base(filename)
 	if filename == "" || filename == "." {
 		return nil, ErrInvalidInput
@@ -134,12 +134,13 @@ func (s *UploadService) Upload(user *domain.User, filename string, declaredSize 
 		src := storage.AbsPath(s.Storage.UploadDir, rec.FilePath)
 		dst := storage.AbsOutputPDF(s.Storage.OutputDir, user.UID, rec.FileID)
 		if s.Queue.TryEnqueue(queue.Task{
-			UploadID: rec.ID,
-			FileID:   rec.FileID,
-			UserID:   rec.UserID,
-			UID:      user.UID,
-			SrcPath:  src,
-			DstPath:  dst,
+			UploadID:    rec.ID,
+			FileID:      rec.FileID,
+			UserID:      rec.UserID,
+			UID:         user.UID,
+			SrcPath:     src,
+			DstPath:     dst,
+			DocPassword: docPassword,
 		}) {
 			// Only pending→queued. Do not overwrite converting/completed if Worker already advanced.
 			n, err := s.Repo.UpdateStatusIf(rec.ID, []string{domain.UploadStatusPending}, domain.UploadStatusQueued, "")

@@ -59,7 +59,7 @@ func (e *openOfficeEngine) Validate() error {
 	return nil
 }
 
-func (e *openOfficeEngine) Convert(ctx context.Context, srcPath, dstPath string) error {
+func (e *openOfficeEngine) Convert(ctx context.Context, srcPath, dstPath, password string) error {
 	resolved, err := resolveOpenOfficeCommand(e.command)
 	if err != nil {
 		return err
@@ -98,31 +98,45 @@ func (e *openOfficeEngine) Convert(ctx context.Context, srcPath, dstPath string)
 	args := []string{
 		"--headless", "--nologo", "--nofirststartwizard", "--norestore",
 		"-env:UserInstallation=" + uri,
-		"--convert-to", "pdf", "--outdir", outdir, srcPath,
 	}
+	if password != "" {
+		args = append(args, "--password="+password)
+	}
+	args = append(args, "--convert-to", "pdf", "--outdir", outdir, srcPath)
 	cmd := exec.Command(resolved, args...)
 	var stderr bytes.Buffer
 	cmd.Stdout = io.Discard
 	cmd.Stderr = &limitedBuffer{buf: &stderr, limit: openOfficeMaxStderr}
 	if err := runOpenOfficeCmd(ctx, cmd); err != nil {
-		snippet := strings.TrimSpace(stderr.String())
-		if ctx.Err() != nil {
-			return fmt.Errorf("engine openoffice: %w", ctx.Err())
-		}
-		if snippet != "" {
-			return fmt.Errorf("engine openoffice: convert failed: %w: %s", err, snippet)
-		}
-		return fmt.Errorf("engine openoffice: convert failed: %w", err)
+		return mapOpenOfficeConvertError(err, password, ctx.Err())
 	}
 
 	pdf, err := findConvertedPDF(outdir, srcPath)
 	if err != nil {
+		if strings.Contains(err.Error(), "no pdf produced") {
+			return mapOpenOfficeConvertError(err, password, nil)
+		}
 		return err
 	}
 	if err := moveFile(pdf, dstPath); err != nil {
 		return fmt.Errorf("engine openoffice: move pdf: %w", err)
 	}
 	return nil
+}
+
+// mapOpenOfficeConvertError maps a failed soffice convert (process started and
+// failed) to password sentinels. Headless stderr often has no "password" word,
+// so password vs corruption cannot be distinguished: empty password →
+// ErrPasswordRequired, non-empty → ErrPasswordWrong. ctx timeout/cancel is
+// returned as-is (wrapped), never as a password sentinel.
+func mapOpenOfficeConvertError(err error, password string, ctxErr error) error {
+	if err == nil {
+		return nil
+	}
+	if ctxErr != nil {
+		return fmt.Errorf("engine openoffice: %w", ctxErr)
+	}
+	return mapOfficeOpenError(err, password, true)
 }
 
 func resolveOpenOfficeCommand(command string) (string, error) {
@@ -223,6 +237,14 @@ func copyFileOpenOffice(src, dst string) error {
 type limitedBuffer struct {
 	buf   *bytes.Buffer
 	limit int
+}
+
+func redactPasswordSnippet(snippet, password string) string {
+	snippet = strings.TrimSpace(snippet)
+	if password == "" || snippet == "" {
+		return snippet
+	}
+	return strings.ReplaceAll(snippet, password, "")
 }
 
 func (l *limitedBuffer) Write(p []byte) (int, error) {

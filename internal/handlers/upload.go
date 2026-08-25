@@ -93,7 +93,8 @@ func (h *UploadHandler) Upload(c *gin.Context) {
 
 	wm := strings.TrimSpace(c.PostForm("watermark"))
 	reqID := strings.TrimSpace(c.GetHeader("X-Request-ID"))
-	rec, err := h.Svc.Upload(user, fh.Filename, fh.Size, f, wm, reqID)
+	docPass := pickDocPassword(c.GetHeader("X-Doc-Password"), c.PostForm("password"))
+	rec, err := h.Svc.Upload(user, fh.Filename, fh.Size, f, wm, reqID, docPass)
 	if err != nil {
 		if mapServiceError(c, err) {
 			return

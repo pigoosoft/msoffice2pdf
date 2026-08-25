@@ -51,12 +51,13 @@ func (q *Queue) requeueOnce() {
 		src := storage.AbsPath(q.Storage.UploadDir, u.FilePath)
 		dst := storage.AbsOutputPDF(q.Storage.OutputDir, user.UID, u.FileID)
 		task := Task{
-			UploadID: u.ID,
-			FileID:   u.FileID,
-			UserID:   u.UserID,
-			UID:      user.UID,
-			SrcPath:  src,
-			DstPath:  dst,
+			UploadID:    u.ID,
+			FileID:      u.FileID,
+			UserID:      u.UserID,
+			UID:         user.UID,
+			SrcPath:     src,
+			DstPath:     dst,
+			DocPassword: q.passwordFor(u.ID),
 		}
 		if q.TryEnqueue(task) {
 			// Only promote pending→queued. Never overwrite converting (Worker may already own it;

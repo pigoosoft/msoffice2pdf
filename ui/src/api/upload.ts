@@ -35,6 +35,7 @@ export interface UploadResult {
 export function uploadFile(
   file: File,
   watermark?: string,
+  password?: string,
   onProgress?: (percent: number) => void,
 ) {
   const form = new FormData()
@@ -42,6 +43,10 @@ export function uploadFile(
   const wm = watermark?.trim()
   if (wm) {
     form.append('watermark', wm)
+  }
+  const pw = password?.trim()
+  if (pw) {
+    form.append('password', pw)
   }
   return http
     .post('/api/upload', form, {

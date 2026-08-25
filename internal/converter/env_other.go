@@ -21,6 +21,7 @@ func ValidateEnvironment(opts Options) error {
 			}
 		case EngineMSOffice, EngineWPSOffice:
 			return fmt.Errorf("engine %s requires Windows COM", name)
+		case EngineOFD:
 		default:
 			return fmt.Errorf("unknown engine %q", name)
 		}

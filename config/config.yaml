@@ -32,6 +32,7 @@ converter:
   engines:
     - msoffice
     - wpsoffice
+    - ofd
   # openoffice:
   #   command: "C:/Program Files/LibreOffice/program/soffice.exe"
   #   user_profile: "C:/data/msoffice2pdf/lo-profile"
@@ -53,12 +54,13 @@ converter:
     "*.pot": msoffice
     "*.potx": msoffice
     "*.potm": msoffice
-    "*.wps": msoffice 
-    "*.wpt": msoffice 
-    "*.et": msoffice
-    "*.ett": msoffice
-    "*.dps": msoffice
-    "*.dpt": msoffice 
+    "*.wps": wpsoffice 
+    "*.wpt": wpsoffice 
+    "*.et": wpsoffice
+    "*.ett": wpsoffice
+    "*.dps": wpsoffice
+    "*.dpt": wpsoffice
+    "*.ofd": ofd
 
 cleanup:
   # upload_ttl: 24h   # deprecated, ignored
@@ -131,6 +133,9 @@ upload:
       - "PowerPoint Document"
     "*.dpt":
       - "PowerPoint Document"
+  validate_ofd:
+    "*.ofd":
+      - "OFD.xml"
   allowed_exts:
     - "*.doc"
     - "*.docx"
@@ -155,6 +160,7 @@ upload:
     - "*.ett"
     - "*.dps"
     - "*.dpt"
+    - "*.ofd"
 
 watermark:
   text: ""

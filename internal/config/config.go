@@ -125,6 +125,7 @@ type UploadConfig struct {
 	ValidateMagic *bool               `yaml:"validate_magic"` // nil → true
 	ValidateNew   map[string][]string `yaml:"validate_new"`
 	ValidateOLE   map[string][]string `yaml:"validate_ole"`
+	ValidateOFD   map[string][]string `yaml:"validate_ofd"`
 }
 
 func boolOrDefault(p *bool, def bool) bool {
@@ -220,16 +221,19 @@ func LookupValidateEntries(m map[string][]string, filenameOrExt string) []string
 	return lookupValidateEntries(m, normalizeFilenameOrExt(filenameOrExt))
 }
 
-// OfficeFamily returns "ooxml", "ole", or "" based on validate_new / validate_ole ownership.
+// OfficeFamily returns "ooxml", "ole", "ofd", or "" based on validate_* ownership.
 func (u UploadConfig) OfficeFamily(filenameOrExt string) string {
 	ext := normalizeFilenameOrExt(filenameOrExt)
 	inNew := len(lookupValidateEntries(u.ValidateNew, ext)) > 0
 	inOLE := len(lookupValidateEntries(u.ValidateOLE, ext)) > 0
+	inOFD := len(lookupValidateEntries(u.ValidateOFD, ext)) > 0
 	switch {
-	case inNew && !inOLE:
+	case inNew && !inOLE && !inOFD:
 		return "ooxml"
-	case inOLE && !inNew:
+	case inOLE && !inNew && !inOFD:
 		return "ole"
+	case inOFD && !inNew && !inOLE:
+		return "ofd"
 	default:
 		return ""
 	}
@@ -433,9 +437,9 @@ func (c *Config) Validate() error {
 	for i, raw := range c.Converter.Engines {
 		name := strings.TrimSpace(strings.ToLower(raw))
 		switch name {
-		case "msoffice", "wpsoffice", "openoffice":
+		case "msoffice", "wpsoffice", "openoffice", "ofd":
 		default:
-			return fmt.Errorf("converter.engines[%d] unknown engine %q (want msoffice, wpsoffice, or openoffice)", i, raw)
+			return fmt.Errorf("converter.engines[%d] unknown engine %q (want msoffice, wpsoffice, openoffice, or ofd)", i, raw)
 		}
 		if _, ok := seenEngines[name]; ok {
 			return fmt.Errorf("converter.engines duplicate name %q", name)
@@ -481,8 +485,14 @@ func (c *Config) Validate() error {
 	if c.Upload.ValidateOLE == nil {
 		c.Upload.ValidateOLE = map[string][]string{}
 	}
+	if c.Upload.ValidateOFD == nil {
+		c.Upload.ValidateOFD = map[string][]string{}
+	}
 
-	for ext := range c.Converter.ExtEngines {
+	for ext, eng := range c.Converter.ExtEngines {
+		if eng == "ofd" {
+			continue
+		}
 		if c.Upload.AppKind(ext) == "" {
 			return fmt.Errorf("converter.ext_engines[%q]: cannot infer app kind from upload.validate_new/validate_ole (need word/|xl/|ppt/ or WordDocument|Workbook|PowerPoint Document)", ext)
 		}
@@ -495,10 +505,21 @@ func (c *Config) Validate() error {
 		}
 		inNew := len(lookupValidateEntries(c.Upload.ValidateNew, ext)) > 0
 		inOLE := len(lookupValidateEntries(c.Upload.ValidateOLE, ext)) > 0
-		if inNew && inOLE {
-			return fmt.Errorf("upload.allowed_exts %q cannot appear in both validate_new and validate_ole", ext)
+		inOFD := len(lookupValidateEntries(c.Upload.ValidateOFD, ext)) > 0
+		count := 0
+		if inNew {
+			count++
 		}
-		// neither: allowed (structure validation skipped)
+		if inOLE {
+			count++
+		}
+		if inOFD {
+			count++
+		}
+		if count > 1 {
+			return fmt.Errorf("upload.allowed_exts %q cannot appear in more than one of validate_new, validate_ole, and validate_ofd", ext)
+		}
+		// none: allowed (structure validation skipped)
 	}
 	if c.Cleanup.UploadTTL > 0 {
 		slog.Warn("cleanup.upload_ttl is deprecated and ignored; terminal uploads archive immediately")

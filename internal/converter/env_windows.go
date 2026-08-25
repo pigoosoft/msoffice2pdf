@@ -24,6 +24,7 @@ func ValidateEnvironment(opts Options) error {
 		case EngineMSOffice, EngineWPSOffice:
 			hasCOM = true
 		case EngineOpenOffice:
+		case EngineOFD:
 		default:
 			return fmt.Errorf("unknown engine %q", name)
 		}
@@ -68,6 +69,7 @@ func ValidateEnvironment(opts Options) error {
 			if err := eng.Validate(); err != nil {
 				return err
 			}
+		case EngineOFD:
 		}
 	}
 	return nil

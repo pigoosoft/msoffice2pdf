@@ -9,6 +9,7 @@ import {
   type UploadHistoryItem,
   type PdfLogItem,
 } from '@/api/history'
+import { formatDocPasswordError } from '@/i18n/docPasswordError'
 
 const { t, locale } = useI18n()
 const activeTab = ref('uploads')
@@ -42,8 +43,23 @@ const uploadColumns = computed<PagedColumn[]>(() => {
     { prop: 'fileid', label: t('common.fileid'), minWidth: 180, showOverflowTooltip: true },
     { prop: 'filename', label: t('common.filename'), minWidth: 140, showOverflowTooltip: true },
     { prop: 'final_status', label: t('history.finalStatus'), width: 100, slot: 'final_status' },
-    { prop: 'error_code', label: t('history.errorCode'), width: 160, showOverflowTooltip: true },
-    { prop: 'error_msg', label: t('history.errorMsg'), minWidth: 140, showOverflowTooltip: true },
+    {
+      prop: 'error_code',
+      label: t('history.errorCode'),
+      width: 160,
+      showOverflowTooltip: true,
+      formatter: (row) => formatDocPasswordError(String((row as UploadHistoryItem).error_code || '')),
+    },
+    {
+      prop: 'error_msg',
+      label: t('history.errorMsg'),
+      minWidth: 140,
+      showOverflowTooltip: true,
+      formatter: (row) => {
+        const item = row as UploadHistoryItem
+        return formatDocPasswordError(item.error_code, item.error_msg)
+      },
+    },
     { prop: 'retry_count', label: t('common.retries'), width: 70, align: 'center' },
     {
       prop: 'file_size',

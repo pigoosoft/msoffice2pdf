@@ -3,7 +3,7 @@ package converter
 import "context"
 
 type Converter interface {
-	Convert(ctx context.Context, srcPath, dstPath string) error
+	Convert(ctx context.Context, srcPath, dstPath, password string) error
 }
 
 // Options configures a Converter instance.

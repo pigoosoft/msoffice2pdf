@@ -9,6 +9,7 @@ const (
 	EngineMSOffice   = "msoffice"
 	EngineWPSOffice  = "wpsoffice"
 	EngineOpenOffice = "openoffice"
+	EngineOFD        = "ofd"
 )
 
 type AppKind string

@@ -44,6 +44,12 @@ func File(path, filename string, uploadCfg config.UploadConfig) error {
 			return fmt.Errorf("%w: no validate_ole rules", ErrStructure)
 		}
 		return checkOLEStreams(f, req)
+	case "ofd":
+		req := config.LookupValidateEntries(uploadCfg.ValidateOFD, filename)
+		if len(req) == 0 {
+			return fmt.Errorf("%w: no validate_ofd rules", ErrStructure)
+		}
+		return checkZIPMembers(path, req)
 	default:
 		// Allowed but unknown family: magic-only (should not happen if Validate() strict).
 		return nil

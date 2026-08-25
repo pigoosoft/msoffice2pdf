@@ -10,10 +10,10 @@ Chinese SSE client / server notes: [usage_zh.md](./usage_zh.md). Detailed SSE de
 
 | Component | Requirement |
 |-----------|-------------|
-| OS | Production COM conversion: **Windows Server 2016+ / Windows 10+**. **Linux / macOS** can enable `openoffice` only for real CLI conversion. With no usable engine configured, non-Windows builds use a stub minimal PDF for integration testing. |
-| Go | 1.21+ (when building from source) |
+| OS | Production COM conversion: **Windows Server 2016+ / Windows 10+**. **Linux / macOS** can enable `openoffice` and/or `ofd` (no COM). With no usable engine configured, non-Windows builds use a stub minimal PDF for integration testing. |
+| Go | 1.25+ (when building from source; zc310/ofd requires 1.25.5) |
 | Database | MySQL 8.0+ or PostgreSQL 14+ |
-| Office | `msoffice`: Microsoft Office 2016+ (licensed); `wpsoffice`: WPS Office; `openoffice`: LibreOffice / Apache OpenOffice (`soffice` CLI, cross-platform) |
+| Office | `msoffice`: Microsoft Office 2016+ (licensed); `wpsoffice`: WPS Office; `openoffice`: LibreOffice / Apache OpenOffice (`soffice` CLI, cross-platform); `ofd`: `internal/ofd` + [zc310/ofd](https://github.com/zc310/ofd) (pure Go; previously ofdgo; no COM / soffice) |
 
 ### 1.1 Office / DCOM (required for production conversion)
 
@@ -75,6 +75,8 @@ Optional environment variables (override the YAML counterparts):
 | `MSOFFICE2PDF_DB_DSN` | `database.dsn` |
 | `MSOFFICE2PDF_JWT_SECRET` | `auth.jwt_secret` |
 
+`MSOFFICE2PDF_DOC_PASSWORD` is **not** a YAML override: only the `convert-worker` child uses it for the document open password (the parent never writes the password into argv). Do not log it.
+
 Other common sections:
 
 | Section | Purpose |
@@ -83,17 +85,18 @@ Other common sections:
 | `storage` | `upload` / `output` / `trash` / `expired` directories |
 | `converter` | Worker count, queue size, Office timeout, requeue interval, `com_mode`, `temp_sandbox`, `engines`, `ext_engines`, `openoffice` |
 | `cleanup` | Upload/PDF TTL and cleanup interval (no trash TTL) |
-| `upload` | Max size, allowed extensions, `validate_magic` / `validate_new` / `validate_ole` |
+| `upload` | Max size, allowed extensions, `validate_magic` / `validate_new` / `validate_ole` / `validate_ofd` |
 
 Common detail keys:
 
 | Key | Description |
 |-----|-------------|
-| `upload.validate_magic` | Whether to check magic bytes (OLE/ZIP headers); default true. Structure checks are handled by `validate_new` / `validate_ole` |
+| `upload.validate_magic` | Whether to check magic bytes (OLE/ZIP headers); default true. Structure checks are handled by `validate_new` / `validate_ole` / `validate_ofd` |
 | `upload.validate_new` | OOXML extension → required paths inside the ZIP (map); an extension listed here is treated as OOXML family |
-| `upload.validate_ole` | OLE extension → required stream names in the compound document (map); mutually exclusive with `validate_new`. Covers MS binary and WPS native `.wps/.wpt/.et/.ett/.dps/.dpt` (stream names aligned to WordDocument / Workbook / PowerPoint Document). Application type for conversion (Writer/Spreadsheet/Presentation) is also derived from these maps — **not** hard-coded by extension in code |
+| `upload.validate_ole` | OLE extension → required stream names in the compound document (map); mutually exclusive with `validate_new` / `validate_ofd`. Covers MS binary and WPS native `.wps/.wpt/.et/.ett/.dps/.dpt` (stream names aligned to WordDocument / Workbook / PowerPoint Document). Application type for conversion (Writer/Spreadsheet/Presentation) is also derived from these maps — **not** hard-coded by extension in code |
+| `upload.validate_ofd` | OFD extension → required ZIP members (e.g. `OFD.xml`); mutually exclusive with `validate_new` / `validate_ole`. Magic is ZIP/PK |
 | `converter.temp_sandbox` | Per-task isolated `TEMP`/`TMP`/`TMPDIR` (`msoffice2pdf-com-*`) to isolate Office temp / `~$` files; default true. With `inprocess`, requires `worker_count=1`; ignored for `openoffice` |
-| `converter.engines` | Enabled converter engine names (unique); valid values `msoffice` \| `wpsoffice` \| `openoffice`; default `[msoffice]`. At startup: COM engines probe ProgIDs for Writer/Spreadsheet/Presentation; `openoffice` runs `command --version`; any failure logs ERROR and exits |
+| `converter.engines` | Enabled converter engine names (unique); valid values `msoffice` \| `wpsoffice` \| `openoffice` \| `ofd`; default `[msoffice]`. At startup: COM engines probe ProgIDs; `openoffice` runs `command --version`; `ofd` needs no COM/CLI probe. Any COM/OpenOffice probe failure logs ERROR and exits |
 | `converter.openoffice.command` | LibreOffice / Apache OpenOffice executable path (or `soffice` on PATH); required when `engines` includes `openoffice` |
 | `converter.openoffice.user_profile` | User profile root; each task uses `{user_profile}/{uuid}/` and deletes it after conversion; required when `engines` includes `openoffice` |
 | `converter.ext_engines` | Extension → engine name (no auto); value must be ∈ `engines`. If an `allowed_exts` entry lacks a mapping, startup logs ERROR (does not exit) and uploads are rejected with `40004` |
@@ -568,7 +571,7 @@ curl -s -X POST http://127.0.0.1:8080/api/admin/users/u1/reset-token \
 
 | Method | Path | Description |
 |--------|------|-------------|
-| POST | `/api/upload` | multipart: `file` (required); optional `watermark` (secondary watermark, max 255); optional Header `X-Request-ID` (max 128) |
+| POST | `/api/upload` | multipart: `file` (required); optional `watermark` (secondary watermark, max 255); optional `password` (document open password); optional Header `X-Request-ID` (max 128), `X-Doc-Password` (document open password; wins over form `password` when both non-empty) |
 | GET | `/api/uploads` | Current user's **pending conversion queue** (`upload` table only) |
 | GET | `/api/upload/limits` | Current upload limits: `allowed_exts` (`.ext` array) and `max_size` (bytes); auth required. Web UI fetches after login / session restore |
 | GET | `/api/upload/:fileid` | Detail: `upload` first, then fall back to `upload_history` terminal snapshot after archive |
@@ -576,7 +579,7 @@ curl -s -X POST http://127.0.0.1:8080/api/admin/users/u1/reset-token \
 | DELETE | `/api/upload/:fileid` | Archive delete (`ArchiveUpload` → `trash/` + `upload_history`) |
 | GET | `/api/admin/uploads` | Admin: all uploads |
 
-After a successful upload, status is usually `queued`; if the queue is full it stays `pending` until `converter.requeue_interval` scans and requeues. On conversion failure, retries follow `converter.retry_count` / `retry_interval`; after exhaustion, `ArchiveUpload` archives to `expired/` (`upload_history.final_status=failed`, `error_code=ERR_RETRY_LIMIT_EXCEEDED`). Successful conversion is archived immediately as well; `/api/uploads` excludes completed items — see `/api/history/uploads` or `GET /api/pdf/:fileid/status` (checks `upload`, then `upload_history`). Excel defaults to `excel_page_fit: fit_width` (one page wide horizontally, may paginate vertically); set `auto` to keep the document's own page setup.
+After a successful upload, status is usually `queued`; if the queue is full it stays `pending` until `converter.requeue_interval` scans and requeues. On conversion failure, retries follow `converter.retry_count` / `retry_interval`; **document password errors** (`ERR_DOC_PASSWORD_REQUIRED` / `ERR_DOC_PASSWORD_WRONG`) archive immediately with no retry. Other failures after exhaustion use `ArchiveUpload` to `expired/` (`upload_history.final_status=failed`, `error_code=ERR_RETRY_LIMIT_EXCEEDED`). Successful conversion is archived immediately as well; `/api/uploads` excludes completed items — see `/api/history/uploads` or `GET /api/pdf/:fileid/status` (checks `upload`, then `upload_history`). Excel defaults to `excel_page_fit: fit_width` (one page wide horizontally, may paginate vertically); set `auto` to keep the document's own page setup.
 
 PDF watermark: config `watermark.text` is the primary watermark; form field `watermark` is secondary (smaller font). If both are empty, no watermark is applied. Watermarking is post-processed after COM export; on failure the PDF remains downloadable with `status=completed` and `warn_code=WARN_WATERMARK`.
 
@@ -589,6 +592,12 @@ curl -s -X POST http://127.0.0.1:8080/api/upload \
   -H "X-Request-ID: client-req-001" \
   -F "file=@C:/path/to/report.docx" \
   -F "watermark=secondary watermark text"
+
+# OFD upload (document password via Header; form field password also works. Header wins if both non-empty)
+curl -s -X POST http://127.0.0.1:8080/api/upload \
+  -H "X-UID: u1" -H "X-Token: <api_token>" \
+  -H "X-Doc-Password: secret" \
+  -F "file=@a.ofd"
 
 # upload limits (Web / client preflight)
 curl -s http://127.0.0.1:8080/api/upload/limits \
@@ -606,7 +615,9 @@ curl -s -X DELETE http://127.0.0.1:8080/api/upload/<fileid> \
   -H "X-UID: u1" -H "X-Token: <api_token>"
 ```
 
-Allowed types and size come from `upload.allowed_exts` and `upload.max_size`. Uploads also run magic and configurable ZIP/OLE structure checks (`validate_magic` / `validate_new` / `validate_ole`): fake Office files (e.g. renaming `.jpg` to `.docx`, or missing required package paths) are rejected before writing under `upload/` or the DB — HTTP 400 with `code` `40002` (`ERR_FILE_MAGIC`) or `40003` (`ERR_FILE_STRUCTURE`). Unmapped extensions in `converter.ext_engines` return `40004` (`ERR_EXT_ENGINE_UNMAPPED`).
+Allowed types and size come from `upload.allowed_exts` and `upload.max_size` (including `*.ofd`). Uploads also run magic and configurable ZIP/OLE/OFD structure checks (`validate_magic` / `validate_new` / `validate_ole` / `validate_ofd`): fake Office / fake OFD (e.g. renaming `.jpg` to `.docx` or `.ofd`, or missing required package paths such as `OFD.xml`) are rejected before writing under `upload/` or the DB — HTTP 400 with `code` `40002` (`ERR_FILE_MAGIC`) or `40003` (`ERR_FILE_STRUCTURE`). Unmapped extensions in `converter.ext_engines` return `40004` (`ERR_EXT_ENGINE_UNMAPPED`).
+
+Document open password (all engines): Header `X-Doc-Password` and form field `password` both work; when both are non-empty, **Header wins**. Password is in-memory only (not stored, not logged). Password errors are **asynchronous**: upload still returns `queued` (not HTTP 400); read `error_code` from `GET /api/pdf/:fileid/status`, SSE `/api/pdf/events`, or `/api/history/uploads`: `ERR_DOC_PASSWORD_REQUIRED`, `ERR_DOC_PASSWORD_WRONG`. OFD parse failures during conversion are also async: `ERR_OFD_INVALID_PACKAGE`, `ERR_OFD_NO_PAGES` (distinct from upload-time magic / missing zip member 400).
 
 ---
 
@@ -709,7 +720,7 @@ curl -s "http://127.0.0.1:8080/api/pdfs?page=1&page_size=20" \
   -H "X-UID: u1" -H "X-Token: <api_token>"
 ```
 
-On Windows with COM engines (`msoffice` / `wpsoffice`), or any platform with `openoffice`, a real PDF is produced. On non-Windows without `openoffice`, a stub minimal PDF is written so the queue and API can be exercised.
+On Windows with COM engines (`msoffice` / `wpsoffice`), any platform with `openoffice`, or `ofd` (`internal/ofd` + [zc310/ofd](https://github.com/zc310/ofd); previously ofdgo), a real PDF is produced. On non-Windows without `openoffice` / `ofd`, a stub minimal PDF is written so the queue and API can be exercised.
 
 ---
 
@@ -774,7 +785,7 @@ curl -s -o "./out-$FILEID.pdf" "$BASE/api/pdf/$FILEID/download" \
 
 **Converter engines and process modes:**
 
-- `converter.engines`: enabled engine list (`msoffice` / `wpsoffice` / `openoffice`, unique names). Startup probes: COM engines (`msoffice` / `wpsoffice`) `CreateObject` (ProgID) for Writer/Spreadsheet/Presentation; `openoffice` validates `command` / `user_profile` and runs `command --version`; any failure logs and exits. Non-Windows may only enable `openoffice`; configuring a COM engine causes exit.
+- `converter.engines`: enabled engine list (`msoffice` / `wpsoffice` / `openoffice` / `ofd`). Startup probes: COM engines `CreateObject` for Writer/Spreadsheet/Presentation; `openoffice` validates `command` / `user_profile` and runs `command --version`; `ofd` loads with no probe. COM/OpenOffice probe failure logs and exits. Non-Windows may enable `openoffice` and/or `ofd`; configuring a COM engine causes exit.
 - `converter.openoffice`: LibreOffice / Apache OpenOffice CLI backend (cross-platform). `command` is the `soffice` path; `user_profile` is the profile root. Each conversion creates an isolated profile under `{user_profile}/{uuid}/` and deletes that subdirectory afterward (safe with multiple Workers). Workers `exec` directly — no `convert-worker` subprocess; `com_mode` / `temp_sandbox` / `excel_page_fit` do not apply to `openoffice`.
 - `converter.ext_engines`: explicit extension → engine binding (e.g. `"*.docx": msoffice`, `"*.wps": wpsoffice`). No `auto`. WPS-native `.wps` / `.et` / `.dps` should only be mapped when `wpsoffice` is enabled. Pure `openoffice` deploy example:
 
@@ -792,7 +803,7 @@ curl -s -o "./out-$FILEID.pdf" "$BASE/api/pdf/$FILEID/download" \
   ```
 
 - `converter.com_mode`: `subprocess` (default; COM in short-lived `convert-worker` child with `--engine`) or `inprocess` (go-ole inside the Worker process; debug only — native COM crashes can take down the whole service); COM engines only
-- `converter.retry_count` / `retry_interval`: extra retries after conversion failure and minimum wait before requeue; on exhaustion archive with `ERR_RETRY_LIMIT_EXCEEDED` (written to `upload_history`)
+- `converter.retry_count` / `retry_interval`: extra retries after conversion failure; password errors (`ERR_DOC_PASSWORD_REQUIRED` / `ERR_DOC_PASSWORD_WRONG`) skip retry and archive immediately. On other exhaustion, archive with `ERR_RETRY_LIMIT_EXCEEDED`
 - `converter.temp_sandbox`: per-task isolated `TEMP`/`TMP` (prefix `msoffice2pdf-com-`) to isolate Office temp / `~$` files; `subprocess` injects via `cmd.Env`, inherited by `convert-worker`. With `inprocess`, requires `worker_count=1`; COM engines only
 - Orphan sweep: on service start, clean leftover `convert-worker` processes, process images for **enabled** engines (including `openoffice` `soffice.exe` / `soffice.bin` / `soffice`), and all `msoffice2pdf-com-*` TEMP dirs; while running, on each `requeue_interval`, kill `convert-worker` processes older than `office_timeout + 2m` (matched by command line containing `convert-worker`, not the main service), and remove stale TEMP sandboxes under the same grace; if any worker was killed this round or there is currently no `convert-worker`, also clear Office/WPS/soffice images for enabled engines
 - **Concurrency cap:** concurrent `convert-worker` count is capped by `converter.worker_count` (each Worker runs one Convert at a time; HTTP load does not unboundedly spawn children); `openoffice` runs inside the Worker and is not limited by `convert-worker` count

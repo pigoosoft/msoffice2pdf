@@ -12,6 +12,7 @@ const router = useRouter()
 const dropzone = ref<InstanceType<typeof UploadDropzone> | null>(null)
 const selected = ref<File | null>(null)
 const watermark = ref('')
+const docPassword = ref('')
 const uploading = ref(false)
 const progress = ref(0)
 
@@ -28,13 +29,14 @@ async function onSubmit() {
   uploading.value = true
   progress.value = 0
   try {
-    const res = await uploadFile(selected.value, watermark.value, (p) => {
+    const res = await uploadFile(selected.value, watermark.value, docPassword.value, (p) => {
       progress.value = p
     })
     ElMessage.success(t('upload.success', { name: res.filename }))
     dropzone.value?.clear()
     selected.value = null
     watermark.value = ''
+    docPassword.value = ''
     progress.value = 0
     await router.push('/board')
   } catch (e) {
@@ -60,6 +62,17 @@ async function onSubmit() {
             show-word-limit
             clearable
             :placeholder="t('upload.watermarkPlaceholder')"
+          />
+        </el-form-item>
+
+        <el-form-item :label="t('upload.docPassword')">
+          <el-input
+            v-model="docPassword"
+            type="password"
+            autocomplete="new-password"
+            show-password
+            clearable
+            :placeholder="t('upload.docPasswordPlaceholder')"
           />
         </el-form-item>
 

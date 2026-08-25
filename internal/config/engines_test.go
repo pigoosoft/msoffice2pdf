@@ -171,3 +171,47 @@ func TestValidateOpenOfficeOptionalWhenDisabled(t *testing.T) {
 		t.Fatalf("openoffice section optional when disabled: %v", err)
 	}
 }
+
+func TestValidateOFDEngineAndFamily(t *testing.T) {
+	c := baseCfg()
+	c.Converter.Engines = []string{"ofd"}
+	c.Converter.ExtEngines = map[string]string{"*.ofd": "ofd"}
+	c.Upload.AllowedExts = []string{"*.ofd"}
+	c.Upload.ValidateNew = nil
+	c.Upload.ValidateOLE = nil
+	c.Upload.ValidateOFD = map[string][]string{"*.ofd": {"OFD.xml"}}
+	if err := c.Validate(); err != nil {
+		t.Fatalf("ofd mapping should pass: %v", err)
+	}
+	if c.Upload.OfficeFamily("x.ofd") != "ofd" {
+		t.Fatalf("family: %q", c.Upload.OfficeFamily("x.ofd"))
+	}
+	if c.Upload.AppKind("x.ofd") != "" {
+		t.Fatal("ofd must not infer office app kind")
+	}
+}
+
+func TestValidateOFDMutexWithNew(t *testing.T) {
+	c := baseCfg()
+	c.Converter.Engines = []string{"msoffice", "ofd"}
+	c.Converter.ExtEngines = map[string]string{"*.docx": "msoffice", "*.ofd": "ofd"}
+	c.Upload.AllowedExts = []string{"*.docx", "*.ofd"}
+	c.Upload.ValidateOFD = map[string][]string{"*.ofd": {"OFD.xml"}}
+	c.Upload.ValidateNew["*.ofd"] = []string{"word/document.xml"}
+	if err := c.Validate(); err == nil {
+		t.Fatal("want mutex error")
+	}
+}
+
+func TestExtEnginesOFDSkipsAppKind(t *testing.T) {
+	c := baseCfg()
+	c.Converter.Engines = []string{"ofd"}
+	c.Converter.ExtEngines = map[string]string{"*.ofd": "ofd"}
+	c.Upload.AllowedExts = []string{"*.ofd"}
+	c.Upload.ValidateNew = nil
+	c.Upload.ValidateOLE = nil
+	c.Upload.ValidateOFD = map[string][]string{"*.ofd": {"OFD.xml"}}
+	if err := c.Validate(); err != nil {
+		t.Fatalf("skip app kind: %v", err)
+	}
+}

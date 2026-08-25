@@ -11,11 +11,14 @@ import (
 func newConverter(opts Options) Converter {
 	engines := map[string]Engine{}
 	for _, n := range opts.Engines {
-		if n == EngineOpenOffice {
+		switch n {
+		case EngineOpenOffice:
 			engines[n] = &openOfficeEngine{
 				command:     opts.OpenOfficeCommand,
 				userProfile: opts.OpenOfficeUserProfile,
 			}
+		case EngineOFD:
+			engines[n] = &ofdEngine{}
 		}
 	}
 	if len(engines) == 0 {
@@ -28,7 +31,8 @@ type stubConverter struct{}
 
 var minimalPDF = []byte("%PDF-1.1\n%\xe2\xe3\xcf\xd3\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF\n")
 
-func (stubConverter) Convert(ctx context.Context, srcPath, dstPath string) error {
+func (stubConverter) Convert(ctx context.Context, srcPath, dstPath, password string) error {
+	_ = password
 	if err := ctx.Err(); err != nil {
 		return err
 	}

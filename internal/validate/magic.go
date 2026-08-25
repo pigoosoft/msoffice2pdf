@@ -29,7 +29,7 @@ func checkMagic(r io.Reader, filename string, uploadCfg config.UploadConfig) err
 		if len(buf) < 8 || !bytes.Equal(buf[:8], oleHeader) {
 			return fmt.Errorf("%w: expected OLE header", ErrMagic)
 		}
-	case "ooxml":
+	case "ooxml", "ofd":
 		if len(buf) < 2 || !bytes.Equal(buf[:2], zipHeader) {
 			return fmt.Errorf("%w: expected ZIP/PK header", ErrMagic)
 		}

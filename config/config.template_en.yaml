@@ -24,6 +24,9 @@
 #   MSOFFICE2PDF_DB_DSN      → database.dsn
 #   MSOFFICE2PDF_JWT_SECRET  → auth.jwt_secret
 #
+# convert-worker only (not a YAML override; never write into config files; never log):
+#   MSOFFICE2PDF_DOC_PASSWORD → document open password (subprocess only; parent never puts it on argv)
+#
 # Duration format: Go time.Duration strings, e.g. 30s, 5m, 1h, 24h, 168h
 # Size format: upload.max_size accepts 100MB / 1GB / 1024KB, or a raw byte integer
 # =============================================================================
@@ -148,13 +151,16 @@ converter:
 
   # Enabled conversion engine names in this process. Type: string[].
   # Constraints: missing/null key normalizes to [msoffice]; explicit [] is illegal; unique elements;
-  # current legal names: msoffice | wpsoffice | openoffice.
+  # current legal names: msoffice | wpsoffice | openoffice | ofd.
   # At startup: COM engines (msoffice / wpsoffice) probe ProgIDs (Writer/Spreadsheet/Presentation) per listed name —
-  # any failure ERROR and exit; openoffice probes command --version. Do not list wpsoffice if WPS is not installed.
+  # any failure ERROR and exit; openoffice probes command --version. ofd needs no COM/CLI probe (pure Go, internal/ofd + github.com/zc310/ofd; previously ofdgo).
+  # The parent always execs convert-worker --engine ofd for OFD (independent of com_mode); the worker calls ofd.Convert
+  # before converter.New. Do not list wpsoffice if WPS is not installed.
   engines:
     - msoffice
     # - wpsoffice
     # - openoffice
+    - ofd
 
   # openoffice — LibreOffice / Apache OpenOffice CLI (required when engines includes openoffice)
   # openoffice:
@@ -165,6 +171,7 @@ converter:
   # Keys match upload.allowed_exts forms (*.docx / .docx / docx); normalized to bare ext like docx after validate.
   # Missing mapping for an allowed_exts entry: ERROR log at startup (no exit); upload rejected
   # (HTTP 400 / 40004 / ERR_EXT_ENGINE_UNMAPPED).
+  # Value ofd skips AppKind inference (not Word/Excel/PPT); *.ofd must map to ofd.
   # With wpsoffice enabled, add *.wps / *.wpt / *.et / *.ett / *.dps / *.dpt → wpsoffice
   # (and matching stream names under upload.validate_ole; see upload section).
   ext_engines:
@@ -191,6 +198,7 @@ converter:
     # "*.ett": wpsoffice
     # "*.dps": wpsoffice
     # "*.dpt": wpsoffice
+    "*.ofd": ofd
 
 # -----------------------------------------------------------------------------
 # cleanup — background TTL cleanup (P5: upload / PDF; no trash TTL)
@@ -270,13 +278,19 @@ upload:
   max_size: 100MB
 
   # Enable magic-byte checks (file header only: OLE D0 CF… or ZIP PK; must match extension family).
-  # Type: bool. Default/nil = true. Deeper ZIP/OLE checks: validate_new / validate_ole.
-  # OOXML vs OLE family is determined by which validate_* map owns the extension (no hard-coded lists in code).
+  # Type: bool. Default/nil = true. Deeper ZIP/OLE/OFD checks: validate_new / validate_ole / validate_ofd.
+  # OOXML vs OLE vs ofd family is determined by which validate_* map owns the extension (no hard-coded lists in code).
+  # ofd family: ZIP/PK magic + zip member check (e.g. OFD.xml).
   validate_magic: true
 
+  # Document open password (all engines, including ofd): HTTP upload Header X-Doc-Password wins over form field
+  # password when both are non-empty (TrimSpace empty = unset). Memory-only: never persisted, never logged, never on argv.
+  # convert-worker receives it only via env MSOFFICE2PDF_DOC_PASSWORD (see file header).
+
   # OOXML extension → required paths inside the zip. Type: map[string][]string.
-  # Extensions in validate_new are checked as OOXML (ZIP); those in validate_ole as OLE.
-  # An extension must not appear in both; if in neither, structural checks are skipped (magic still applies when family is known).
+  # Extensions in validate_new are checked as OOXML (ZIP); those in validate_ole as OLE; those in validate_ofd as OFD.
+  # An extension must not appear in more than one of validate_new / validate_ole / validate_ofd;
+  # if in none, structural checks are skipped (magic still applies when family is known).
   validate_new:
     "*.docx":
       - "word/document.xml"
@@ -302,7 +316,7 @@ upload:
       - "ppt/presentation.xml"
 
   # OLE extension → required stream names in the compound document. Type: map[string][]string.
-  # Mutually exclusive with validate_new for the same extension.
+  # Mutually exclusive with validate_new and validate_ofd for the same extension.
   # Native WPS .wps/.wpt/.et/.ett/.dps/.dpt are OLE/CFB; stream names match the corresponding MS binary formats.
   validate_ole:
     "*.doc":
@@ -330,9 +344,16 @@ upload:
     "*.dpt":
       - "PowerPoint Document"
 
+  # OFD extension → required paths inside the zip. Type: map[string][]string.
+  # Extensions in this map are checked as the ofd family (ZIP/PK magic + member paths, default OFD.xml).
+  # Mutually exclusive with validate_new / validate_ole for the same extension.
+  validate_ofd:
+    "*.ofd":
+      - "OFD.xml"
+
   # Allowed extension patterns. Type: string array. Constraint: must not be empty.
   # Forms "*.docx", ".docx", "docx" are accepted; matching is case-insensitive.
-  # Restrict to Office document types; do not widen to arbitrary files.
+  # Restrict to Office / OFD document types; do not widen to arbitrary files.
   allowed_exts:
     - "*.doc"
     - "*.docx"
@@ -357,6 +378,7 @@ upload:
     - "*.ett"
     - "*.dps"
     - "*.dpt"
+    - "*.ofd"
 
 # -----------------------------------------------------------------------------
 # watermark — post-export text watermark on PDF (after successful COM export)

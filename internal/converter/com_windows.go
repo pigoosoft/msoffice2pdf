@@ -48,6 +48,8 @@ func newConverter(opts Options) Converter {
 				command:     opts.OpenOfficeCommand,
 				userProfile: opts.OpenOfficeUserProfile,
 			}
+		case EngineOFD:
+			engines[n] = &ofdEngine{}
 		}
 	}
 	return &routingConverter{engines: engines, extEngines: opts.ExtEngines}
@@ -133,7 +135,7 @@ func resolveOfficePID(app *ole.IDispatch, image string, before map[uint32]struct
 	return captureAppPID(app)
 }
 
-func (c *comConverter) Convert(ctx context.Context, srcPath, dstPath string) error {
+func (c *comConverter) Convert(ctx context.Context, srcPath, dstPath, password string) error {
 	if c.tempSandbox {
 		dir, err := createTempSandboxDir()
 		if err != nil {
@@ -174,7 +176,7 @@ func (c *comConverter) Convert(ctx context.Context, srcPath, dstPath string) err
 	handle := &officeHandle{}
 	done := make(chan error, 1)
 	go func() {
-		done <- c.convertSync(ext, srcPath, dstPath, handle)
+		done <- c.convertSync(ext, srcPath, dstPath, handle, password)
 	}()
 
 	select {
@@ -188,7 +190,7 @@ func (c *comConverter) Convert(ctx context.Context, srcPath, dstPath string) err
 	}
 }
 
-func (c *comConverter) convertSync(ext, src, dst string, handle *officeHandle) error {
+func (c *comConverter) convertSync(ext, src, dst string, handle *officeHandle, password string) error {
 	// COM STA requires a fixed OS thread for CoInitialize + all subsequent calls.
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
@@ -221,21 +223,21 @@ func (c *comConverter) convertSync(ext, src, dst string, handle *officeHandle) e
 
 	switch kind {
 	case AppWriter:
-		return convertWord(src, dst, handle, spec)
+		return convertWord(src, dst, handle, spec, password)
 	case AppSpreadsheet:
-		return c.convertExcel(src, dst, handle, spec)
+		return c.convertExcel(src, dst, handle, spec, password)
 	case AppPresentation:
-		return convertPowerPoint(src, dst, handle, spec)
+		return convertPowerPoint(src, dst, handle, spec, password)
 	default:
 		return fmt.Errorf("converter: unsupported app kind %s", kind)
 	}
 }
 
-func convertWord(src, dst string, handle *officeHandle, spec AppSpec) error {
+func convertWord(src, dst string, handle *officeHandle, spec AppSpec, password string) error {
 	handle.setImage(spec.Image)
 	var lastCreate error
 	for _, progID := range spec.ProgIDs {
-		err := convertWordWithProgID(src, dst, handle, spec.Image, progID)
+		err := convertWordWithProgID(src, dst, handle, spec.Image, progID, password)
 		if err == nil {
 			return nil
 		}
@@ -255,7 +257,7 @@ func isCreateObjectErr(err error) bool {
 	return err != nil && strings.Contains(err.Error(), "CreateObject")
 }
 
-func convertWordWithProgID(src, dst string, handle *officeHandle, image, progID string) error {
+func convertWordWithProgID(src, dst string, handle *officeHandle, image, progID, password string) error {
 	before := snapshotPIDs(image)
 
 	unknown, err := oleutil.CreateObject(progID)
@@ -302,11 +304,17 @@ func convertWordWithProgID(src, dst string, handle *officeHandle, image, progID 
 		docVar, err = oleutil.CallMethod(docs, "Open", src, false, true, false)
 		if err != nil {
 			docVar, err = oleutil.CallMethod(docs, "Open", src)
-			if err != nil {
-				_ = quitApp(word)
-				return fmt.Errorf("converter: word Open: %w", err)
-			}
 		}
+	}
+	if err != nil && password != "" {
+		docVar, err = oleutil.CallMethod(docs, "Open", src, false, true, false, password, "")
+		if err != nil {
+			docVar, err = oleutil.CallMethod(docs, "Open", src, false, true, false, password)
+		}
+	}
+	if err != nil {
+		_ = quitApp(word)
+		return mapOfficeOpenError(err, password, officeOpenLooksLikePassword(err))
 	}
 	defer docVar.Clear()
 	doc := docVar.ToIDispatch()
@@ -336,11 +344,11 @@ func convertWordWithProgID(src, dst string, handle *officeHandle, image, progID 
 	return nil
 }
 
-func (c *comConverter) convertExcel(src, dst string, handle *officeHandle, spec AppSpec) error {
+func (c *comConverter) convertExcel(src, dst string, handle *officeHandle, spec AppSpec, password string) error {
 	handle.setImage(spec.Image)
 	var lastCreate error
 	for _, progID := range spec.ProgIDs {
-		err := c.convertExcelWithProgID(src, dst, handle, spec.Image, progID)
+		err := c.convertExcelWithProgID(src, dst, handle, spec.Image, progID, password)
 		if err == nil {
 			return nil
 		}
@@ -356,7 +364,7 @@ func (c *comConverter) convertExcel(src, dst string, handle *officeHandle, spec 
 	return fmt.Errorf("converter: create spreadsheet app: %w", lastCreate)
 }
 
-func (c *comConverter) convertExcelWithProgID(src, dst string, handle *officeHandle, image, progID string) error {
+func (c *comConverter) convertExcelWithProgID(src, dst string, handle *officeHandle, image, progID, password string) error {
 	before := snapshotPIDs(image)
 
 	unknown, err := oleutil.CreateObject(progID)
@@ -396,10 +404,13 @@ func (c *comConverter) convertExcelWithProgID(src, dst string, handle *officeHan
 	wbVar, err := oleutil.CallMethod(books, "Open", src, 0, true)
 	if err != nil {
 		wbVar, err = oleutil.CallMethod(books, "Open", src)
-		if err != nil {
-			_ = quitApp(excel)
-			return fmt.Errorf("converter: excel Open: %w", err)
-		}
+	}
+	if err != nil && password != "" {
+		wbVar, err = oleutil.CallMethod(books, "Open", src, 0, true, 0, password)
+	}
+	if err != nil {
+		_ = quitApp(excel)
+		return mapOfficeOpenError(err, password, officeOpenLooksLikePassword(err))
 	}
 	defer wbVar.Clear()
 	wb := wbVar.ToIDispatch()
@@ -519,11 +530,11 @@ func clearPut(v *ole.VARIANT, err error) error {
 	return err
 }
 
-func convertPowerPoint(src, dst string, handle *officeHandle, spec AppSpec) error {
+func convertPowerPoint(src, dst string, handle *officeHandle, spec AppSpec, password string) error {
 	handle.setImage(spec.Image)
 	var lastCreate error
 	for _, progID := range spec.ProgIDs {
-		err := convertPowerPointWithProgID(src, dst, handle, spec.Image, progID)
+		err := convertPowerPointWithProgID(src, dst, handle, spec.Image, progID, password)
 		if err == nil {
 			return nil
 		}
@@ -539,7 +550,7 @@ func convertPowerPoint(src, dst string, handle *officeHandle, spec AppSpec) erro
 	return fmt.Errorf("converter: create presentation app: %w", lastCreate)
 }
 
-func convertPowerPointWithProgID(src, dst string, handle *officeHandle, image, progID string) error {
+func convertPowerPointWithProgID(src, dst string, handle *officeHandle, image, progID, password string) error {
 	before := snapshotPIDs(image)
 
 	unknown, err := oleutil.CreateObject(progID)
@@ -584,10 +595,13 @@ func convertPowerPointWithProgID(src, dst string, handle *officeHandle, image, p
 	presVar, err := oleutil.CallMethod(presColl, "Open", src, true, false, false)
 	if err != nil {
 		presVar, err = oleutil.CallMethod(presColl, "Open", src)
-		if err != nil {
-			_ = quitApp(ppt)
-			return fmt.Errorf("converter: powerpoint Open: %w", err)
-		}
+	}
+	if err != nil && password != "" {
+		presVar, err = oleutil.CallMethod(presColl, "Open", src, true, false, false, password)
+	}
+	if err != nil {
+		_ = quitApp(ppt)
+		return mapOfficeOpenError(err, password, officeOpenLooksLikePassword(err))
 	}
 	defer presVar.Clear()
 	pres := presVar.ToIDispatch()

@@ -24,6 +24,9 @@
 #   MSOFFICE2PDF_DB_DSN      → database.dsn
 #   MSOFFICE2PDF_JWT_SECRET  → auth.jwt_secret
 #
+# convert-worker 专用（不是 YAML 覆盖项；切勿写入配置文件、切勿记入日志）：
+#   MSOFFICE2PDF_DOC_PASSWORD → 文档打开密码（仅子进程；父进程从不把密码放进 argv）
+#
 # 时长格式：Go time.Duration 字符串，如 30s、5m、1h、24h、168h
 # 大小格式：upload.max_size 支持 100MB / 1GB / 1024KB，或纯字节整数
 # =============================================================================
@@ -146,13 +149,16 @@ converter:
   retry_interval: 30s
 
   # 本进程启用的转换引擎 name 列表。类型：string[]。
-  # 约束：键缺失/null 时规范化为 [msoffice]；显式 [] 非法；元素唯一；当前合法名：msoffice | wpsoffice | openoffice。
+  # 约束：键缺失/null 时规范化为 [msoffice]；显式 [] 非法；元素唯一；当前合法名：msoffice | wpsoffice | openoffice | ofd。
   # 启动时：COM 引擎（msoffice / wpsoffice）对列表每一项做 COM ProgID 探测（Writer/Spreadsheet/Presentation），任一项失败则 ERROR 并退出；
-  # openoffice 执行 command --version 探测；未安装 WPS 时不要列入 wpsoffice。
+  # openoffice 执行 command --version 探测；ofd 不做 COM/CLI 探测（纯 Go，internal/ofd + github.com/zc310/ofd；曾用 ofdgo）。
+  # 父进程转换 OFD 时始终 exec convert-worker --engine ofd（与 com_mode 无关）；子进程在 converter.New 之前调用 ofd.Convert。
+  # 未安装 WPS 时不要列入 wpsoffice。
   engines:
     - msoffice
     # - wpsoffice
     # - openoffice
+    - ofd
 
   # openoffice — LibreOffice / Apache OpenOffice CLI（仅当 engines 含 openoffice 时必填）
   # openoffice:
@@ -162,6 +168,7 @@ converter:
   # 扩展名 → 引擎 name。类型：map[string]string。无 auto；值必须出现在 converter.engines 中。
   # 键与 upload.allowed_exts 同形（*.docx / .docx / docx 均可；校验后规范化为裸扩展名如 docx）。
   # allowed_exts 中缺少映射：启动 ERROR 日志（不退出）；上传拒绝（HTTP 400 / 40004 / ERR_EXT_ENGINE_UNMAPPED）。
+  # 值为 ofd 时跳过 AppKind 推导（不走 Word/Excel/PPT）；*.ofd 必须映射到 ofd。
   # 启用 wpsoffice 时可增加 *.wps / *.wpt / *.et / *.ett / *.dps / *.dpt → wpsoffice
   # （并在 upload.validate_ole 中配置对应流名；见 upload 节）。
   ext_engines:
@@ -188,6 +195,7 @@ converter:
     # "*.ett": wpsoffice
     # "*.dps": wpsoffice
     # "*.dpt": wpsoffice
+    "*.ofd": ofd
 
 # -----------------------------------------------------------------------------
 # cleanup — 后台 TTL 清理（P5：upload / PDF；不做 trash TTL）
@@ -265,13 +273,18 @@ upload:
   max_size: 100MB
 
   # 是否启用魔数校验（仅文件头：OLE D0 CF… 或 ZIP PK，须与扩展名家族一致）。
-  # 类型：bool。缺省/nil = true。ZIP/OLE 结构深度校验见 validate_new / validate_ole。
-  # OOXML/OLE 家族由扩展名归属哪张 validate_* 表决定（禁止代码硬编码扩展名列表）。
+  # 类型：bool。缺省/nil = true。ZIP/OLE/OFD 结构深度校验见 validate_new / validate_ole / validate_ofd。
+  # OOXML / OLE / ofd 家族由扩展名归属哪张 validate_* 表决定（禁止代码硬编码扩展名列表）。
+  # ofd 族：ZIP/PK 魔数 + zip 成员检查（如 OFD.xml）。
   validate_magic: true
 
+  # 文档打开密码（所有引擎，含 ofd）：HTTP 上传 Header X-Doc-Password 优先于表单字段 password
+  # （二者均非空时 Header 胜出；TrimSpace 后为空视为未提供）。仅内存传递，不落库、不写日志、不进 argv。
+  # convert-worker 仅通过环境变量 MSOFFICE2PDF_DOC_PASSWORD 接收（见文件头说明）。
+
   # OOXML 扩展名 → zip 内必须存在的路径列表。类型：map[string][]string。
-  # 出现在 validate_new 的扩展按 OOXML（ZIP）校验；出现在 validate_ole 的按 OLE 校验。
-  # 同一扩展不可两边都有；皆无则跳过结构校验（仅魔数在有家族时生效）。
+  # 出现在 validate_new 的扩展按 OOXML（ZIP）校验；出现在 validate_ole 的按 OLE 校验；出现在 validate_ofd 的按 OFD 校验。
+  # 同一扩展不可同时出现在 validate_new / validate_ole / validate_ofd 中多于一张表；皆无则跳过结构校验（仅魔数在有家族时生效）。
   validate_new:
     "*.docx":
       - "word/document.xml"
@@ -297,7 +310,7 @@ upload:
       - "ppt/presentation.xml"
 
   # OLE 扩展名 → 复合文档内必须存在的流名列表。类型：map[string][]string。
-  # 与 validate_new 互斥：同一扩展不可两边都有。
+  # 与 validate_new / validate_ofd 互斥：同一扩展不可出现在多于一张表。
   # WPS 原生 .wps/.wpt/.et/.ett/.dps/.dpt 为 OLE/CFB，流名与对应 MS 二进制格式兼容。
   validate_ole:
     "*.doc":
@@ -325,9 +338,16 @@ upload:
     "*.dpt":
       - "PowerPoint Document"
 
+  # OFD 扩展名 → zip 内必须存在的路径列表。类型：map[string][]string。
+  # 出现在此表的扩展按 ofd 族校验（ZIP/PK 魔数 + 成员路径，默认 OFD.xml）。
+  # 与 validate_new / validate_ole 互斥：同一扩展不可出现在多于一张表。
+  validate_ofd:
+    "*.ofd":
+      - "OFD.xml"
+
   # 允许的扩展名模式列表。类型：string 数组。约束：不得为空。
   # 支持 "*.docx"、".docx"、"docx" 等形式；匹配时大小写不敏感。
-  # 仅应包含 Office 文档类型，勿放宽到任意文件。
+  # 仅应包含 Office / OFD 文档类型，勿放宽到任意文件。
   allowed_exts:
     - "*.doc"
     - "*.docx"
@@ -352,6 +372,7 @@ upload:
     - "*.ett"
     - "*.dps"
     - "*.dpt"
+    - "*.ofd"
 
 # -----------------------------------------------------------------------------
 # watermark — PDF 后处理文字水印（COM 导出成功后施加）

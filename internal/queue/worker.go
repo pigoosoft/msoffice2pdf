@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"msoffice2pdf/internal/applog"
+	"msoffice2pdf/internal/converter"
 	"msoffice2pdf/internal/domain"
 	"msoffice2pdf/internal/storage"
 	"msoffice2pdf/internal/watermark"
@@ -88,6 +89,32 @@ func (q *Queue) failConvert(uploadID int64, pdf *domain.Pdf, msg string) {
 	}
 	slog.Warn("retry limit exceeded; archiving upload", "upload_id", uploadID, "retry_count", n, "fileid", u.FileID)
 	q.Cleanup.ArchiveUpload(u, domain.UploadStatusFailed, domain.ErrRetryLimitExceeded, msg, domain.ArchiveDirExpired)
+	q.clearPassword(uploadID)
+}
+
+// failPassword marks pdf failed, records failure, and archives immediately (no retry).
+func (q *Queue) failPassword(uploadID int64, pdf *domain.Pdf, code, msg string) {
+	if pdf != nil {
+		pdf.Status = domain.PdfStatusFailed
+		_ = q.PdfRepo.Update(pdf)
+	}
+	if _, err := q.UploadRepo.RecordFailure(uploadID, msg); err != nil {
+		slog.Error("record failure failed", "upload_id", uploadID, "err", err)
+	}
+	u, ferr := q.UploadRepo.FindByID(uploadID)
+	if ferr != nil || u == nil {
+		slog.Error("archive after password error: upload missing", "upload_id", uploadID, "err", ferr)
+		q.clearPassword(uploadID)
+		return
+	}
+	if q.Cleanup == nil {
+		slog.Error("archive after password error: cleanup not wired", "upload_id", uploadID)
+		q.clearPassword(uploadID)
+		return
+	}
+	slog.Warn("password error; archiving upload", "upload_id", uploadID, "fileid", u.FileID, "err", msg)
+	q.Cleanup.ArchiveUpload(u, domain.UploadStatusFailed, code, msg, domain.ArchiveDirExpired)
+	q.clearPassword(uploadID)
 }
 
 func (q *Queue) process(t Task) {
@@ -167,9 +194,18 @@ func (q *Queue) process(t Task) {
 	ctx, cancel := context.WithTimeout(context.Background(), q.cfg.OfficeTimeout)
 	defer cancel()
 
-	err = q.Converter.Convert(ctx, t.SrcPath, t.DstPath)
+	err = q.Converter.Convert(ctx, t.SrcPath, t.DstPath, t.DocPassword)
 	if err != nil {
 		_ = storage.RemoveIfExists(t.DstPath)
+		if converter.IsPasswordError(err) {
+			code := domain.ErrDocPasswordRequired
+			if errors.Is(err, converter.ErrPasswordWrong) {
+				code = domain.ErrDocPasswordWrong
+			}
+			q.failPassword(t.UploadID, pdf, code, code)
+			slog.WarnContext(logCtx, "convert password error", convertLogArgs(t, upload, "engine", engine, "err", code)...)
+			return
+		}
 		msg := err.Error()
 		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
 			msg = "timeout"
@@ -239,5 +275,6 @@ func (q *Queue) process(t Task) {
 		return
 	}
 	q.Cleanup.ArchiveUpload(u, domain.UploadStatusCompleted, "", "", domain.ArchiveDirExpired)
+	q.clearPassword(t.UploadID)
 	slog.InfoContext(logCtx, "convert completed; archived", convertLogArgs(t, upload, "engine", engine)...)
 }

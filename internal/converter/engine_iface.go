@@ -11,7 +11,7 @@ import (
 type Engine interface {
 	Name() string
 	Validate() error
-	Convert(ctx context.Context, srcPath, dstPath string) error
+	Convert(ctx context.Context, srcPath, dstPath, password string) error
 	ProcessImages() []string
 }
 
@@ -19,6 +19,7 @@ var (
 	_ Converter = (*routingConverter)(nil)
 	_ Engine    = (*openOfficeEngine)(nil)
 	_ Engine    = (*comBackendEngine)(nil)
+	_ Engine    = (*ofdEngine)(nil)
 )
 
 type routingConverter struct {
@@ -26,7 +27,7 @@ type routingConverter struct {
 	extEngines map[string]string
 }
 
-func (r *routingConverter) Convert(ctx context.Context, srcPath, dstPath string) error {
+func (r *routingConverter) Convert(ctx context.Context, srcPath, dstPath, password string) error {
 	bare := strings.ToLower(strings.TrimPrefix(filepath.Ext(srcPath), "."))
 	name, ok := r.extEngines[bare]
 	if !ok || name == "" {
@@ -36,7 +37,7 @@ func (r *routingConverter) Convert(ctx context.Context, srcPath, dstPath string)
 	if !ok {
 		return fmt.Errorf("converter: engine %q not loaded", name)
 	}
-	return eng.Convert(ctx, srcPath, dstPath)
+	return eng.Convert(ctx, srcPath, dstPath, password)
 }
 
 // comBackendEngine adapts an existing COM/subprocess Converter to the Engine interface.
@@ -48,6 +49,6 @@ func (c *comBackendEngine) Validate() error { return nil }
 
 func (c *comBackendEngine) ProcessImages() []string { return nil }
 
-func (c *comBackendEngine) Convert(ctx context.Context, src, dst string) error {
-	return c.inner.Convert(ctx, src, dst)
+func (c *comBackendEngine) Convert(ctx context.Context, src, dst, password string) error {
+	return c.inner.Convert(ctx, src, dst, password)
 }

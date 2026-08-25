@@ -9,10 +9,10 @@ One service instance supports **multi-user**, **multi-task**, and **multi-thread
 
 ## Requirements
 
-- Go 1.21+
+- Go 1.25+
 - MySQL 8.0+ or PostgreSQL 14+
 - **Windows** + Microsoft Office 2016+ (or WPS) for COM engines (`msoffice` / `wpsoffice`)
-- **Linux** (or macOS): LibreOffice / Apache OpenOffice installed; enable engine `openoffice` in `config.yaml` (real CLI conversion; no Microsoft Office COM)
+- **Linux** (or macOS): LibreOffice / Apache OpenOffice for engine `openoffice`; **OFD** (`.ofd`) via engine `ofd` (`internal/ofd` + [zc310/ofd](https://github.com/zc310/ofd); previously ofdgo, no COM)
 
 ### Linux: LibreOffice / OpenOffice
 

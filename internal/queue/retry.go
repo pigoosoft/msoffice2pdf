@@ -23,6 +23,12 @@ func (q *Queue) retryLoop() {
 	}
 }
 
+// isPasswordFailCode reports whether error_msg / error_code is a password failure
+// that must never be re-enqueued (even if ArchiveUpload failed and the row remains).
+func isPasswordFailCode(code string) bool {
+	return code == domain.ErrDocPasswordRequired || code == domain.ErrDocPasswordWrong
+}
+
 func (q *Queue) retryOnce() {
 	olderThan := time.Now().Add(-q.cfg.RetryInterval)
 	list, err := q.UploadRepo.ListForRetry(q.cfg.RetryCount, olderThan, q.cfg.QueueSize)
@@ -31,6 +37,10 @@ func (q *Queue) retryOnce() {
 		return
 	}
 	for _, u := range list {
+		if isPasswordFailCode(u.ErrorMsg) {
+			slog.Warn("retry skip: password error", "upload_id", u.ID, "err", u.ErrorMsg)
+			continue
+		}
 		user, err := q.UserRepo.FindByID(u.UserID)
 		if err != nil || user == nil {
 			slog.Warn("retry skip: user missing", "upload_id", u.ID, "user_id", u.UserID)
@@ -39,12 +49,13 @@ func (q *Queue) retryOnce() {
 		src := storage.AbsPath(q.Storage.UploadDir, u.FilePath)
 		dst := storage.AbsOutputPDF(q.Storage.OutputDir, user.UID, u.FileID)
 		task := Task{
-			UploadID: u.ID,
-			FileID:   u.FileID,
-			UserID:   u.UserID,
-			UID:      user.UID,
-			SrcPath:  src,
-			DstPath:  dst,
+			UploadID:    u.ID,
+			FileID:      u.FileID,
+			UserID:      u.UserID,
+			UID:         user.UID,
+			SrcPath:     src,
+			DstPath:     dst,
+			DocPassword: q.passwordFor(u.ID),
 		}
 		if q.TryEnqueue(task) {
 			// Only promote failed→queued; never overwrite converting if Worker already claimed it.

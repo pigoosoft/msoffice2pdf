@@ -35,6 +35,7 @@ type Queue struct {
 
 	mu        sync.Mutex
 	inflight  map[int64]struct{}
+	passwords map[int64]string // upload ID → doc password; never log
 	closed    bool
 	workerWG  sync.WaitGroup
 	requeueWG sync.WaitGroup
@@ -69,7 +70,33 @@ func New(
 		Watermarker:  wm,
 		Cleanup:      cleanup,
 		inflight:     make(map[int64]struct{}),
+		passwords:    make(map[int64]string),
 	}
+}
+
+func (q *Queue) setPassword(id int64, pw string) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if q.passwords == nil {
+		q.passwords = map[int64]string{}
+	}
+	if pw == "" {
+		delete(q.passwords, id)
+		return
+	}
+	q.passwords[id] = pw
+}
+
+func (q *Queue) passwordFor(id int64) string {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	return q.passwords[id]
+}
+
+func (q *Queue) clearPassword(id int64) {
+	q.mu.Lock()
+	delete(q.passwords, id)
+	q.mu.Unlock()
 }
 
 // TryEnqueue returns true if the task is accepted into the channel (or already in flight).
@@ -81,6 +108,9 @@ func (q *Queue) TryEnqueue(t Task) bool {
 	}
 	if _, ok := q.inflight[t.UploadID]; ok {
 		q.mu.Unlock()
+		if t.DocPassword != "" {
+			q.setPassword(t.UploadID, t.DocPassword)
+		}
 		return true
 	}
 	q.mu.Unlock()
@@ -92,6 +122,7 @@ func (q *Queue) TryEnqueue(t Task) bool {
 			q.inflight[t.UploadID] = struct{}{}
 		}
 		q.mu.Unlock()
+		q.setPassword(t.UploadID, t.DocPassword)
 		return true
 	default:
 		return false
