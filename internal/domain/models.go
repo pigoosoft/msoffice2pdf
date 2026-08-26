@@ -109,3 +109,24 @@ type UploadHistory struct {
 }
 
 func (UploadHistory) TableName() string { return "upload_history" }
+
+// PressureSample is a periodic snapshot of queue depth and host resources (admin perf overview).
+type PressureSample struct {
+	ID              int64     `gorm:"primaryKey;autoIncrement"`
+	SampledAt       time.Time `gorm:"index;not null"`
+	Pending         int64
+	Queued          int64
+	Converting      int64
+	Failed          int64
+	ChannelLen      int
+	WorkersCur      int
+	WorkersMax      int
+	WorkersMin      int
+	LogBacklogBytes int64
+	HeapAlloc       uint64
+	RamAvail        uint64
+	DiskFreeMin     uint64
+	DegradeReason   string `gorm:"size:32;not null;default:''"`
+}
+
+func (PressureSample) TableName() string { return "pressure_sample" }

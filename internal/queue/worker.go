@@ -17,7 +17,11 @@ import (
 func (q *Queue) workerLoop(id int) {
 	defer q.workerWG.Done()
 	for t := range q.jobs {
+		held := q.slots.acquire()
 		q.process(t)
+		if held {
+			q.slots.release()
+		}
 		q.doneInflight(t.UploadID)
 	}
 	slog.Debug("converter worker stopped", "worker", id)

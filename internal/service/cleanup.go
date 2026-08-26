@@ -27,6 +27,7 @@ type CleanupService struct {
 	PdfRepo     *repo.PdfRepo
 	PdfLogRepo  *repo.PdfLogRepo
 	UserRepo    *repo.UserRepo
+	SampleRepo  *repo.PressureSampleRepo
 
 	ctx      context.Context
 	cancel   context.CancelFunc
@@ -67,6 +68,25 @@ func (s *CleanupService) loop() {
 func (s *CleanupService) runOnce() {
 	s.expireHistory()
 	s.expirePdfs()
+	s.expireMetrics()
+}
+
+func (s *CleanupService) expireMetrics() {
+	if s.SampleRepo == nil {
+		return
+	}
+	ttl := s.Cfg.MetricsTTL
+	if ttl <= 0 {
+		ttl = 168 * time.Hour
+	}
+	n, err := s.SampleRepo.DeleteOlderThan(time.Now().Add(-ttl))
+	if err != nil {
+		slog.Error("cleanup metrics delete failed", "err", err)
+		return
+	}
+	if n > 0 {
+		slog.Info("cleanup metrics samples deleted", "count", n)
+	}
 }
 
 func (s *CleanupService) expireHistory() {

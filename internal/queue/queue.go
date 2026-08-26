@@ -39,10 +39,13 @@ type Queue struct {
 	closed    bool
 	workerWG  sync.WaitGroup
 	requeueWG sync.WaitGroup
-	retryWG   sync.WaitGroup
-	cancel    context.CancelFunc
-	ctx       context.Context
-	stopOnce  sync.Once
+	retryWG     sync.WaitGroup
+	pressureWG  sync.WaitGroup
+	cancel      context.CancelFunc
+	ctx         context.Context
+	stopOnce    sync.Once
+	slots       *slotLimiter
+	watchDirs   []string
 }
 
 func New(
@@ -71,6 +74,49 @@ func New(
 		Cleanup:      cleanup,
 		inflight:     make(map[int64]struct{}),
 		passwords:    make(map[int64]string),
+		slots:        newSlotLimiter(cfg.WorkerCount, cfg.MinWorkers),
+	}
+}
+
+// SetWatchDirs sets directories whose free space can degrade concurrency (storage + log dir).
+func (q *Queue) SetWatchDirs(dirs ...string) {
+	q.watchDirs = dirs
+}
+
+func (q *Queue) WatchDirs() []string {
+	return q.watchDirs
+}
+
+func (q *Queue) ConverterCfg() config.ConverterConfig {
+	return q.cfg
+}
+
+func (q *Queue) ChannelLen() int {
+	if q == nil || q.jobs == nil {
+		return 0
+	}
+	return len(q.jobs)
+}
+
+// SlotSnapshot returns in-flight conversions, configured max workers, and min workers.
+func (q *Queue) SlotSnapshot() (inflight, max, min int) {
+	if q == nil || q.slots == nil {
+		return 0, 0, 0
+	}
+	return q.slots.snapshot()
+}
+
+// ResourceTripReason is empty when healthy; otherwise log_backlog / heap / ram / disk.
+func (q *Queue) ResourceTripReason() string {
+	if q == nil {
+		return ""
+	}
+	_, r := q.desiredWorkers()
+	switch r {
+	case "log_backlog", "heap", "ram", "disk":
+		return r
+	default:
+		return ""
 	}
 }
 
@@ -155,6 +201,8 @@ func (q *Queue) Start() {
 	go q.requeueLoop()
 	q.retryWG.Add(1)
 	go q.retryLoop()
+	q.pressureWG.Add(1)
+	go q.pressureLoop()
 }
 
 // Stop cancels requeue/retry, closes the job channel, and waits for workers.
@@ -163,6 +211,10 @@ func (q *Queue) Stop() {
 		if q.cancel != nil {
 			q.cancel()
 		}
+		if q.slots != nil {
+			q.slots.wakeAll()
+		}
+		q.pressureWG.Wait()
 		q.requeueWG.Wait()
 		q.retryWG.Wait()
 		q.mu.Lock()

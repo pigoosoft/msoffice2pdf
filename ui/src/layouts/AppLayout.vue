@@ -95,6 +95,7 @@ async function onLogout() {
             <template #title>{{ t('nav.admin') }}</template>
             <el-menu-item index="/admin/users">{{ t('nav.users') }}</el-menu-item>
             <el-menu-item index="/admin/overview">{{ t('nav.overview') }}</el-menu-item>
+            <el-menu-item index="/admin/perf">{{ t('nav.perf') }}</el-menu-item>
           </el-sub-menu>
         </el-menu>
       </el-aside>
@@ -126,6 +127,7 @@ async function onLogout() {
           <template #title>{{ t('nav.admin') }}</template>
           <el-menu-item index="/admin/users">{{ t('nav.users') }}</el-menu-item>
           <el-menu-item index="/admin/overview">{{ t('nav.overview') }}</el-menu-item>
+          <el-menu-item index="/admin/perf">{{ t('nav.perf') }}</el-menu-item>
         </el-sub-menu>
       </el-menu>
     </el-drawer>

@@ -261,8 +261,11 @@ curl -s "http://127.0.0.1:8080/api/admin/uploads" \
 
 Configured under `converter` in `config.yaml`:
 
-- `worker_count` / `queue_size` / `office_timeout`
+- `worker_count` / `min_workers` / `queue_size` / `office_timeout`
+- `mem_limit_mb` / `disk_min_free_mb` / `log_backlog_max_mb` — size for peak concurrent COM tasks (~0.5–1.5GB RSS each, disk ~`2×upload.max_size`); if heap, free RAM, free disk, or unflushed logs exceed the tripwire, concurrency drops to `min_workers` and recovers +1 at a time
 - `requeue_interval` — scan DB for `pending|queued|converting` and refill the channel by `upload.id` ascending
+
+Logs are written asynchronously (no drop, workers do not wait). Each line is freed from RAM as soon as it is written to the console or daily file.
 
 On Windows, conversion uses Office COM (go-ole). On non-Windows builds a stub writes a minimal PDF so the queue/API can be exercised.
 

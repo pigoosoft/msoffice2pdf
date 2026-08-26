@@ -18,6 +18,7 @@ const (
 	CodeForbidden          = 40301
 	CodeNotFound           = 40401
 	CodeConflict           = 40901
+	CodeInternal           = 50001
 )
 
 func mapServiceError(c *gin.Context, err error) bool {

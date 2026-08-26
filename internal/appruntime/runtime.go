@@ -12,6 +12,7 @@ import (
 	"msoffice2pdf/internal/config"
 	"msoffice2pdf/internal/converter"
 	"msoffice2pdf/internal/db"
+	"msoffice2pdf/internal/metrics"
 	"msoffice2pdf/internal/queue"
 	"msoffice2pdf/internal/repo"
 	"msoffice2pdf/internal/server"
@@ -66,6 +67,7 @@ type Runtime struct {
 	gdb         *gorm.DB
 	queue       *queue.Queue
 	cleanup     *service.CleanupService
+	sampler     *metrics.Sampler
 	srv         *server.Server
 }
 
@@ -102,9 +104,9 @@ func (rt *Runtime) Start() error {
 
 	if err := rt.startWork(); err != nil {
 		rt.mu.Lock()
-		srv, cleanup, q, gdb := rt.takeResourcesLocked()
+		srv, cleanup, sampler, q, gdb := rt.takeResourcesLocked()
 		rt.mu.Unlock()
-		_ = stopResources(srv, cleanup, q, gdb)
+		_ = stopResources(srv, cleanup, sampler, q, gdb)
 
 		rt.mu.Lock()
 		rt.status = Failed
@@ -131,10 +133,10 @@ func (rt *Runtime) Stop() error {
 		return nil
 	}
 	rt.status = Stopping
-	srv, cleanup, q, gdb := rt.takeResourcesLocked()
+	srv, cleanup, sampler, q, gdb := rt.takeResourcesLocked()
 	rt.mu.Unlock()
 
-	err := stopResources(srv, cleanup, q, gdb)
+	err := stopResources(srv, cleanup, sampler, q, gdb)
 
 	rt.mu.Lock()
 	rt.status = Stopped
@@ -178,6 +180,7 @@ func (rt *Runtime) startWork() error {
 	pdfLogRepo := &repo.PdfLogRepo{DB: gdb}
 	historyRepo := &repo.UploadHistoryRepo{DB: gdb}
 	expiredRepo := &repo.ExpiredUploadRepo{DB: gdb}
+	sampleRepo := &repo.PressureSampleRepo{DB: gdb}
 
 	cleanup := &service.CleanupService{
 		DB:          gdb,
@@ -188,6 +191,7 @@ func (rt *Runtime) startWork() error {
 		PdfRepo:     pdfRepo,
 		PdfLogRepo:  pdfLogRepo,
 		UserRepo:    userRepo,
+		SampleRepo:  sampleRepo,
 	}
 
 	service.MigrateUploadHistoryOnce(cleanup, expiredRepo, cfg.Converter.RetryCount)
@@ -202,12 +206,22 @@ func (rt *Runtime) startWork() error {
 		watermark.Service{},
 		cleanup,
 	)
+	q.SetWatchDirs(cfg.Storage.UploadDir, cfg.Storage.OutputDir, cfg.Storage.TrashDir, cfg.Storage.ExpiredDir, cfg.Log.FileDir)
 	q.Start()
 	cleanup.Start()
+
+	sampler := &metrics.Sampler{
+		Interval: cfg.Cleanup.MetricsInterval,
+		Queue:    q,
+		Uploads:  uploadRepo,
+		Samples:  sampleRepo,
+	}
+	sampler.Start()
 
 	rt.mu.Lock()
 	rt.queue = q
 	rt.cleanup = cleanup
+	rt.sampler = sampler
 	rt.mu.Unlock()
 
 	srv := server.New(server.Deps{
@@ -216,6 +230,7 @@ func (rt *Runtime) startWork() error {
 		Queue:       q,
 		Cleanup:     cleanup,
 		HistoryRepo: historyRepo,
+		SampleRepo:  sampleRepo,
 	})
 	rt.mu.Lock()
 	rt.srv = srv
@@ -242,10 +257,10 @@ func (rt *Runtime) watchListenErrors(errCh <-chan error) {
 		return
 	}
 	rt.status = Stopping
-	srv, cleanup, q, gdb := rt.takeResourcesLocked()
+	srv, cleanup, sampler, q, gdb := rt.takeResourcesLocked()
 	rt.mu.Unlock()
 
-	_ = stopResources(srv, cleanup, q, gdb)
+	_ = stopResources(srv, cleanup, sampler, q, gdb)
 
 	rt.mu.Lock()
 	rt.status = Failed
@@ -253,19 +268,21 @@ func (rt *Runtime) watchListenErrors(errCh <-chan error) {
 }
 
 // takeResourcesLocked clears and returns owned resources. Caller must hold mu.
-func (rt *Runtime) takeResourcesLocked() (srv *server.Server, cleanup *service.CleanupService, q *queue.Queue, gdb *gorm.DB) {
+func (rt *Runtime) takeResourcesLocked() (srv *server.Server, cleanup *service.CleanupService, sampler *metrics.Sampler, q *queue.Queue, gdb *gorm.DB) {
 	srv = rt.srv
 	cleanup = rt.cleanup
+	sampler = rt.sampler
 	q = rt.queue
 	gdb = rt.gdb
 	rt.srv = nil
 	rt.cleanup = nil
+	rt.sampler = nil
 	rt.queue = nil
 	rt.gdb = nil
-	return srv, cleanup, q, gdb
+	return srv, cleanup, sampler, q, gdb
 }
 
-func stopResources(srv *server.Server, cleanup *service.CleanupService, q *queue.Queue, gdb *gorm.DB) error {
+func stopResources(srv *server.Server, cleanup *service.CleanupService, sampler *metrics.Sampler, q *queue.Queue, gdb *gorm.DB) error {
 	var firstErr error
 
 	if srv != nil {
@@ -276,6 +293,9 @@ func stopResources(srv *server.Server, cleanup *service.CleanupService, q *queue
 		cancel()
 	}
 
+	if sampler != nil {
+		sampler.Stop()
+	}
 	if cleanup != nil {
 		cleanup.Stop()
 	}

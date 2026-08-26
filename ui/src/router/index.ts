@@ -27,6 +27,11 @@ const router = createRouter({
           component: () => import('@/views/admin/OverviewView.vue'),
           meta: { admin: true },
         },
+        {
+          path: 'admin/perf',
+          component: () => import('@/views/admin/PerfView.vue'),
+          meta: { admin: true },
+        },
       ],
     },
   ],

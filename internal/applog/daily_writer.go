@@ -9,10 +9,12 @@ import (
 	"time"
 )
 
-// DailyBufferedWriter appends to {dir}/yyyymmdd.log with buffering,
+// DailyBufferedWriter appends to {dir}/yyyymmdd{nameSuffix}.log with buffering,
 // optional periodic Sync, and calendar-day rotation (local time).
+// nameSuffix "" → yyyymmdd.log; "_detail" → yyyymmdd_detail.log.
 type DailyBufferedWriter struct {
 	dir           string
+	nameSuffix    string
 	flushInterval time.Duration
 
 	mu     sync.Mutex
@@ -25,11 +27,16 @@ type DailyBufferedWriter struct {
 }
 
 func NewDailyBufferedWriter(dir string, flushInterval time.Duration) (*DailyBufferedWriter, error) {
+	return newDailyWriter(dir, flushInterval, "")
+}
+
+func newDailyWriter(dir string, flushInterval time.Duration, nameSuffix string) (*DailyBufferedWriter, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, fmt.Errorf("mkdir log dir: %w", err)
 	}
 	w := &DailyBufferedWriter{
 		dir:           dir,
+		nameSuffix:    nameSuffix,
 		flushInterval: flushInterval,
 		done:          make(chan struct{}),
 	}
@@ -118,7 +125,7 @@ func (w *DailyBufferedWriter) rotateLocked(now time.Time) error {
 		w.buf = nil
 	}
 	day := now.Format("20060102")
-	path := filepath.Join(w.dir, day+".log")
+	path := filepath.Join(w.dir, day+w.nameSuffix+".log")
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
 	if err != nil {
 		return fmt.Errorf("open log file: %w", err)

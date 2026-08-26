@@ -84,3 +84,48 @@ export function listAdminPdfs(page = 1, pageSize = 20, uid?: string) {
     })
     .then((r) => dataOf<PageResult<PdfItem>>(r))
 }
+
+export type MetricsRange = '1h' | '24h' | '7d'
+
+export interface MetricsLimits {
+  mem_limit_bytes: number
+  disk_min_free_bytes: number
+  log_backlog_max_bytes: number
+}
+
+export interface MetricsSample {
+  sampled_at: string
+  pending: number
+  queued: number
+  converting: number
+  failed: number
+  channel_len: number
+  workers_cur: number
+  workers_max: number
+  workers_min: number
+  log_backlog_bytes: number
+  heap_alloc: number
+  ram_avail: number
+  disk_free_min: number
+  degrade_reason: string
+}
+
+export interface MetricsCurrent extends MetricsSample {
+  limits: MetricsLimits
+}
+
+export interface MetricsHistory {
+  range: MetricsRange | string
+  bucket: string
+  points: MetricsSample[]
+}
+
+export function getAdminMetrics() {
+  return http.get('/api/admin/metrics').then((r) => dataOf<MetricsCurrent>(r))
+}
+
+export function getAdminMetricsHistory(range: MetricsRange) {
+  return http
+    .get('/api/admin/metrics/history', { params: { range } })
+    .then((r) => dataOf<MetricsHistory>(r))
+}

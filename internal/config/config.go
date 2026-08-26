@@ -65,6 +65,10 @@ type OpenOfficeConfig struct {
 
 type ConverterConfig struct {
 	WorkerCount     int               `yaml:"worker_count"`
+	MinWorkers      int               `yaml:"min_workers"`
+	MemLimitMB      int64             `yaml:"mem_limit_mb"`
+	DiskMinFreeMB   int64             `yaml:"disk_min_free_mb"`
+	LogBacklogMaxMB int64             `yaml:"log_backlog_max_mb"`
 	QueueSize       int               `yaml:"queue_size"`
 	OfficeTimeout   time.Duration     `yaml:"office_timeout"`
 	RequeueInterval time.Duration     `yaml:"requeue_interval"`
@@ -99,6 +103,9 @@ type CleanupConfig struct {
 
 	PdfTTL   time.Duration `yaml:"pdf_ttl"`
 	Interval time.Duration `yaml:"interval"`
+
+	MetricsInterval time.Duration `yaml:"metrics_interval"`
+	MetricsTTL      time.Duration `yaml:"metrics_ttl"`
 }
 
 type AuthConfig struct {
@@ -388,6 +395,27 @@ func (c *Config) Validate() error {
 	if c.Converter.WorkerCount <= 0 {
 		return fmt.Errorf("converter.worker_count must be > 0")
 	}
+	if c.Converter.MinWorkers <= 0 {
+		c.Converter.MinWorkers = 1
+	}
+	if c.Converter.MinWorkers > c.Converter.WorkerCount {
+		return fmt.Errorf("converter.min_workers must be <= worker_count")
+	}
+	if c.Converter.MemLimitMB < 0 {
+		return fmt.Errorf("converter.mem_limit_mb must be >= 0")
+	}
+	if c.Converter.DiskMinFreeMB < 0 {
+		return fmt.Errorf("converter.disk_min_free_mb must be >= 0")
+	}
+	if c.Converter.DiskMinFreeMB == 0 {
+		c.Converter.DiskMinFreeMB = 1024
+	}
+	if c.Converter.LogBacklogMaxMB < 0 {
+		return fmt.Errorf("converter.log_backlog_max_mb must be >= 0")
+	}
+	if c.Converter.LogBacklogMaxMB == 0 {
+		c.Converter.LogBacklogMaxMB = 32
+	}
 	if c.Converter.QueueSize <= 0 {
 		return fmt.Errorf("converter.queue_size must be > 0")
 	}
@@ -532,6 +560,18 @@ func (c *Config) Validate() error {
 	}
 	if c.Cleanup.Interval <= 0 {
 		return fmt.Errorf("cleanup.interval must be > 0")
+	}
+	if c.Cleanup.MetricsInterval < 0 {
+		return fmt.Errorf("cleanup.metrics_interval must be >= 0")
+	}
+	if c.Cleanup.MetricsInterval == 0 {
+		c.Cleanup.MetricsInterval = 10 * time.Second
+	}
+	if c.Cleanup.MetricsTTL < 0 {
+		return fmt.Errorf("cleanup.metrics_ttl must be >= 0")
+	}
+	if c.Cleanup.MetricsTTL == 0 {
+		c.Cleanup.MetricsTTL = 168 * time.Hour
 	}
 	if err := c.Watermark.validateAndNormalize(); err != nil {
 		return err

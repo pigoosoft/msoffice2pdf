@@ -105,9 +105,26 @@ storage:
 # converter — in-memory conversion queue and Office COM / stub
 # -----------------------------------------------------------------------------
 converter:
-  # Worker concurrency. Type: int. Constraint: must be > 0.
-  # Suggest ~CPU×2; too high increases Office COM contention. Example: 4
+  # Max convert workers. Type: int. Constraint: must be > 0.
+  # Budget: each COM task ~0.5–1.5GB child RSS plus on-disk source+PDF (~2×upload.max_size).
+  # Suggest worker_count ≤ min(CPU cores, RAM_GB/2); 4 is typical on ≥8GB Office hosts.
   worker_count: 4
+
+  # Floor when degrading under resource pressure. Type: int. Default/0 = 1. Constraint: 1..worker_count.
+  min_workers: 1
+
+  # Go heap + log-backlog tripwire (MiB). Type: int. 0 = auto (50% of RAM, at least 512MiB).
+  # Exceeding drops concurrency to min_workers. Does not include Office child RSS.
+  mem_limit_mb: 0
+
+  # Minimum free space (MiB) on watched dirs. Type: int. Default/0 = 1024.
+  # Watches upload/output/trash/expired and log.file_dir. Below this → min_workers.
+  # Suggest ≥ worker_count × max_size × 2 plus log headroom.
+  disk_min_free_mb: 1024
+
+  # Max unflushed log RAM (MiB). Type: int. Default/0 = 32. Exceeding → min_workers.
+  # Lines are dropped from the in-memory queue as soon as they are written to disk.
+  log_backlog_max_mb: 32
 
   # In-memory channel capacity. Type: int. Constraint: must be > 0.
   # When full, upload still succeeds; upload.status stays pending until requeue scan enqueues it.
@@ -229,6 +246,13 @@ cleanup:
   # Cleanup scan interval; runs once immediately at startup. Type: Duration. Constraint: must be > 0. Example: 1h
   interval: 1h
 
+  # How often to persist a performance sample. Type: Duration. Default/0 = 10s. Constraint: must be > 0 after default fill.
+  # Independent of the 2s converter pressure check. Feeds the admin Performance page.
+  metrics_interval: 10s
+
+  # How long to keep sample rows. Type: Duration. Default/0 = 168h (7 days). Cleanup deletes older pressure_sample rows.
+  metrics_ttl: 168h
+
 # -----------------------------------------------------------------------------
 # auth — Web JWT and related secrets
 # Note: long-lived API tokens (X-UID + X-Token) live in the user table and are not
@@ -257,7 +281,11 @@ log:
   output: stdout
 
   # Also write logs to daily files. Type: bool. Default/nil = false.
-  # When true, writes {file_dir}/yyyymmdd.log; creates the dir at startup; open failure aborts startup.
+  # When true, writes:
+  #   {file_dir}/yyyymmdd.log — compact text lines (uid/LEVEL/action)
+  #   {file_dir}/yyyymmdd_detail.log — same JSON detail as the console (slog; Gin/GORM share this sink)
+  # Console and file writes use an unbounded async queue: convert workers do not wait on disk/console and lines are never dropped; a stderr warning is emitted if backlog grows large.
+  # Creates the dir at startup; open failure aborts startup.
   file_enabled: false
 
   # File log directory. Type: string. Relative to CWD or absolute. Required when file_enabled=true.

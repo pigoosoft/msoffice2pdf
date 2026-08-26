@@ -3,6 +3,7 @@ package config_test
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"msoffice2pdf/internal/config"
 )
@@ -213,5 +214,34 @@ func TestExtEnginesOFDSkipsAppKind(t *testing.T) {
 	c.Upload.ValidateOFD = map[string][]string{"*.ofd": {"OFD.xml"}}
 	if err := c.Validate(); err != nil {
 		t.Fatalf("skip app kind: %v", err)
+	}
+}
+
+func TestValidateMinWorkersAndResourceDefaults(t *testing.T) {
+	c := baseCfg()
+	if err := c.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if c.Converter.MinWorkers != 1 || c.Converter.DiskMinFreeMB != 1024 || c.Converter.LogBacklogMaxMB != 32 {
+		t.Fatalf("defaults min=%d disk=%d backlog=%d", c.Converter.MinWorkers, c.Converter.DiskMinFreeMB, c.Converter.LogBacklogMaxMB)
+	}
+	if c.Cleanup.MetricsInterval != 10*time.Second || c.Cleanup.MetricsTTL != 168*time.Hour {
+		t.Fatalf("metrics defaults interval=%s ttl=%s", c.Cleanup.MetricsInterval, c.Cleanup.MetricsTTL)
+	}
+	c = baseCfg()
+	c.Converter.MinWorkers = 2
+	c.Converter.WorkerCount = 1
+	if err := c.Validate(); err == nil {
+		t.Fatal("want min_workers > worker_count error")
+	}
+	c = baseCfg()
+	c.Cleanup.MetricsInterval = -1
+	if err := c.Validate(); err == nil {
+		t.Fatal("want metrics_interval < 0 error")
+	}
+	c = baseCfg()
+	c.Cleanup.MetricsTTL = -time.Second
+	if err := c.Validate(); err == nil {
+		t.Fatal("want metrics_ttl < 0 error")
 	}
 }

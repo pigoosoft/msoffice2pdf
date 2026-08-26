@@ -2,7 +2,10 @@ package db
 
 import (
 	"fmt"
+	"log"
+	"time"
 
+	"msoffice2pdf/internal/applog"
 	"msoffice2pdf/internal/config"
 	"msoffice2pdf/internal/domain"
 
@@ -24,7 +27,11 @@ func Open(cfg config.DatabaseConfig) (*gorm.DB, error) {
 	}
 
 	gdb, err := gorm.Open(dialector, &gorm.Config{
-		Logger: logger.Default.LogMode(logger.Warn),
+		Logger: logger.New(log.New(applog.ConsoleWriter(), "\r\n", log.LstdFlags), logger.Config{
+			SlowThreshold: 200 * time.Millisecond,
+			LogLevel:      logger.Warn,
+			Colorful:      false,
+		}),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("open database: %w", err)
@@ -48,6 +55,7 @@ func Open(cfg config.DatabaseConfig) (*gorm.DB, error) {
 		&domain.PdfLog{},
 		&domain.ExpiredUpload{},
 		&domain.UploadHistory{},
+		&domain.PressureSample{},
 	); err != nil {
 		return nil, fmt.Errorf("automigrate: %w", err)
 	}

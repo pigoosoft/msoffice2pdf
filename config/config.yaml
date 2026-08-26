@@ -21,6 +21,10 @@ storage:
 
 converter:
   worker_count: 4
+  min_workers: 1
+  mem_limit_mb: 0
+  disk_min_free_mb: 1024
+  log_backlog_max_mb: 32
   queue_size: 100
   office_timeout: 300s
   requeue_interval: 30s
@@ -69,6 +73,8 @@ cleanup:
   history_ttl_delete_row: false
   pdf_ttl: 24h
   interval: 1h
+  metrics_interval: 10s
+  metrics_ttl: 168h
 
 auth:
   jwt_secret: "change-me-in-production"

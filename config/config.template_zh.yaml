@@ -105,9 +105,27 @@ storage:
 # converter — 内存转换队列与 Office COM / stub
 # -----------------------------------------------------------------------------
 converter:
-  # Worker 并发数。类型：int。约束：必须 > 0。
-  # 建议约 CPU×2；过高会加重 Office COM 争用。示例：4
+  # Worker 并发上限。类型：int。约束：必须 > 0。
+  # 口径：每个 COM 任务约 0.5–1.5GB 子进程 RSS + 磁盘上源文件与 PDF（约 2×upload.max_size）。
+  # 建议 worker_count ≤ min(CPU核数, 物理内存GB/2)，Office 机器常见 4（≥8GB RAM）。
+  # 过高会加重 COM 争用与内存/磁盘压力。示例：4
   worker_count: 4
+
+  # 资源不足时的并发下限。类型：int。缺省/0 = 1。约束：1..worker_count。
+  min_workers: 1
+
+  # Go 堆+日志积压告警阈值（MiB）。类型：int。0 = 自动（物理内存 50%，至少 512MiB）。
+  # 超过则把并发降到 min_workers。不含 Office 子进程 RSS（那部分靠 worker_count 口径预留）。
+  mem_limit_mb: 0
+
+  # 监视目录剩余空间下限（MiB）。类型：int。缺省/0 = 1024。
+  # 监视 upload/output/trash/expired 与 log.file_dir。低于此值降到 min_workers。
+  # 建议 ≥ worker_count × max_size × 2（在转源+PDF）再加日志余量。
+  disk_min_free_mb: 1024
+
+  # 未落盘日志占用内存上限（MiB）。类型：int。缺省/0 = 32。超过则降到 min_workers。
+  # 已写入文件的行会立刻从内存队列剔除。
+  log_backlog_max_mb: 32
 
   # 内存 channel 容量。类型：int。约束：必须 > 0。
   # 队列满时上传仍成功，upload.status 保持 pending，由补入扫描再入队。
@@ -224,6 +242,13 @@ cleanup:
   # 清理扫描周期；启动时立即跑一轮。类型：Duration。约束：必须 > 0。示例：1h
   interval: 1h
 
+  # 性能采样写库间隔。类型：Duration。缺省/0 = 10s。约束：必须 > 0（0 填默认）。
+  # 与转换压力检查（固定 2s）独立；供管理员「性能概览」曲线。
+  metrics_interval: 10s
+
+  # 采样行保留时长。类型：Duration。缺省/0 = 168h（7 天）。Cleanup 每轮删除更早的 pressure_sample。
+  metrics_ttl: 168h
+
 # -----------------------------------------------------------------------------
 # auth — Web JWT 与相关密钥
 # 说明：长期 API Token（X-UID + X-Token）存用户表，不由此处过期字段控制；
@@ -251,8 +276,12 @@ log:
   # 示例：stdout
   output: stdout
 
-  # 是否将日志同步写入按日文件。类型：bool。缺省/nil = false。
-  # true 时写入 {file_dir}/yyyymmdd.log；启动时创建目录，打开文件失败则启动失败。
+  # 是否将日志写入按日文件。类型：bool。缺省/nil = false。
+  # true 时写入：
+  #   {file_dir}/yyyymmdd.log — 精简文本行（uid/LEVEL/action）
+  #   {file_dir}/yyyymmdd_detail.log — 与控制台相同的 JSON 明细（含 slog；Gin/GORM 走同一 sink）
+  # 控制台与文件均走异步无界队列：转换 Worker 不等待磁盘/控制台，也不丢行；积压过大时仅 stderr 告警。
+  # 启动时创建目录，打开文件失败则启动失败。
   file_enabled: false
 
   # 文件日志目录。类型：string。相对工作目录或绝对路径。file_enabled=true 时必填。

@@ -2,7 +2,7 @@
 
 完整安装、CLI、API 英文版见 [usage_en.md](./usage_en.md)。中文安装与接口全文见 [docs/usage.md](./docs/usage.md)。
 
-本文包含：**新机器部署所需支持**（与英文 §1.2 对齐），以及 **转换状态 SSE**（与英文 §5.6 对齐）。
+本文包含：**新机器部署所需支持**（与英文 §1.2 对齐），**转换并发与容量规划**（与英文 §6.1 对齐），以及 **转换状态 SSE**（与英文 §5.6 对齐）。
 
 ---
 
@@ -71,6 +71,37 @@ Windows 上不加 `--noui` 会打开 **桌面控制窗口**，要点 **Start** �
 ### DCOM（仅当 COM 跑在无交互会话时）
 
 已登录用户前台或 `--noui` 通常不必再配 DCOM。若以后用 Windows 服务（Session 0）跑 COM，需按 [usage_en.md](./usage_en.md) §1.1 / [docs/usage.md](./docs/usage.md) §1.1 用 `dcomcnfg` 为 Word / Excel / PowerPoint 设置 Identity（This User）。
+
+---
+
+## 转换并发、内存与磁盘
+
+完整键说明与英文对照见 [docs/usage.md](./docs/usage.md) §6.1 / [usage_en.md](./usage_en.md) §6.1；配置注释见 `config/config.template_zh.yaml` 的 `converter` 节。
+
+按**峰值并发**预留内存和磁盘，不要只按 Go 进程估算。每路 COM 任务大约 **0.5–1.5GB** 子进程内存，磁盘上同时存在源文件与 PDF（约 `2 × upload.max_size`）。
+
+| 键 | 口径 |
+|----|------|
+| `converter.worker_count` | 同时转换上限。建议 `≤ min(CPU 核数, 物理内存 GB / 2)`；8GB+ Office 机常见 **4** |
+| `converter.min_workers` | 资源不足时的下限，缺省 **1** |
+| `converter.mem_limit_mb` | Go 堆告警线。`0` = 物理内存 50%、至少 512MiB。不含 Office 子进程 |
+| `converter.disk_min_free_mb` | 监视 `upload`/`output`/`trash`/`expired` 与 `log.file_dir`。缺省 **1024**。建议 `≥ worker_count × max_size × 2` 再加日志余量 |
+| `converter.log_backlog_max_mb` | 未落盘日志内存上限。缺省 **32** |
+
+内存或磁盘不够时，服务把并发降到 `min_workers`（已入队任务不丢）；恢复后每次 +1 直到 `worker_count`。日志写入文件/控制台后立刻从内存剔除，不阻塞转换、也不丢行。不要用同步写盘来“省内存”，那会卡住 Worker。
+
+```yaml
+converter:
+  worker_count: 4
+  min_workers: 1
+  mem_limit_mb: 0
+  disk_min_free_mb: 1024
+  log_backlog_max_mb: 32
+```
+
+改配置后需重启服务。键须同步到两份配置模板。
+
+管理员可在 Web **管理 → 性能概览** 查看当前积压与历史曲线（`GET /api/admin/metrics`、`/api/admin/metrics/history`）。采样间隔 `cleanup.metrics_interval`（默认 10s），保留 `cleanup.metrics_ttl`（默认 7 天）。
 
 ---
 

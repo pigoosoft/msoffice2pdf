@@ -32,6 +32,12 @@ func (r *UploadRepo) CountByUserID(userID int64) (int64, error) {
 	return n, err
 }
 
+func (r *UploadRepo) CountByStatus(status string) (int64, error) {
+	var n int64
+	err := r.DB.Model(&domain.Upload{}).Where("status = ?", status).Count(&n).Error
+	return n, err
+}
+
 func (r *UploadRepo) CountByUserIDAndStatus(userID int64, status string) (int64, error) {
 	var n int64
 	err := r.DB.Model(&domain.Upload{}).Where("user_id = ? AND status = ?", userID, status).Count(&n).Error

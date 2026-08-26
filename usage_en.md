@@ -149,9 +149,10 @@ Other common sections:
 |---------|---------|
 | `server` | Port, read/write timeouts |
 | `storage` | `upload` / `output` / `trash` / `expired` directories |
-| `converter` | Worker count, queue size, Office timeout, requeue interval, `com_mode`, `temp_sandbox`, `engines`, `ext_engines`, `openoffice` |
+| `converter` | Worker cap and resource degrade, queue size, Office timeout, requeue interval, `com_mode`, `temp_sandbox`, `engines`, `ext_engines`, `openoffice` |
 | `cleanup` | Upload/PDF TTL and cleanup interval (no trash TTL) |
 | `upload` | Max size, allowed extensions, `validate_magic` / `validate_new` / `validate_ole` / `validate_ofd` |
+| `log` | Level, stdout JSON, daily files (compact + `_detail`); async unbounded writes |
 
 Common detail keys:
 
@@ -161,6 +162,11 @@ Common detail keys:
 | `upload.validate_new` | OOXML extension → required paths inside the ZIP (map); an extension listed here is treated as OOXML family |
 | `upload.validate_ole` | OLE extension → required stream names in the compound document (map); mutually exclusive with `validate_new` / `validate_ofd`. Covers MS binary and WPS native `.wps/.wpt/.et/.ett/.dps/.dpt` (stream names aligned to WordDocument / Workbook / PowerPoint Document). Application type for conversion (Writer/Spreadsheet/Presentation) is also derived from these maps — **not** hard-coded by extension in code |
 | `upload.validate_ofd` | OFD extension → required ZIP members (e.g. `OFD.xml`); mutually exclusive with `validate_new` / `validate_ole`. Magic is ZIP/PK |
+| `converter.worker_count` | Max concurrent converts. Each COM task ~0.5–1.5GB child RSS plus ~`2×upload.max_size` on disk. Suggest `≤ min(CPU cores, RAM_GB/2)`; 4 is typical on ≥8GB Office hosts |
+| `converter.min_workers` | Floor when degrading under resource pressure; default/0 = 1; must be `1..worker_count` |
+| `converter.mem_limit_mb` | Go-heap tripwire (MiB). `0` = 50% of physical RAM, at least 512MiB. Exceeding drops concurrency to `min_workers`. Does not include Office child RSS |
+| `converter.disk_min_free_mb` | Min free space (MiB) on `upload`/`output`/`trash`/`expired` and `log.file_dir`; default/0 = 1024. Suggest `≥ worker_count × max_size × 2` plus log headroom |
+| `converter.log_backlog_max_mb` | Max unflushed log RAM (MiB); default/0 = 32. Exceeding drops concurrency to `min_workers`. Lines already written to disk/console are dropped from the in-memory queue immediately |
 | `converter.temp_sandbox` | Per-task isolated `TEMP`/`TMP`/`TMPDIR` (`msoffice2pdf-com-*`) to isolate Office temp / `~$` files; default true. With `inprocess`, requires `worker_count=1`; ignored for `openoffice` |
 | `converter.engines` | Enabled converter engine names (unique); valid values `msoffice` \| `wpsoffice` \| `openoffice` \| `ofd`; default `[msoffice]`. At startup: COM engines probe ProgIDs; `openoffice` runs `command --version`; `ofd` needs no COM/CLI probe. Any COM/OpenOffice probe failure logs ERROR and exits |
 | `converter.openoffice.command` | LibreOffice / Apache OpenOffice executable path (or `soffice` on PATH); required when `engines` includes `openoffice` |
@@ -337,9 +343,12 @@ This helps local and LAN access.
 
 #### Process file logging (optional)
 
-By default only stdout JSON is used. Set `file_enabled: true` under the `log` section in `config.yaml` to also write `{file_dir}/yyyymmdd.log` (default dir `logs`), line format:
+By default only stdout JSON is used. Set `file_enabled: true` under the `log` section in `config.yaml` to also write daily files under `{file_dir}` (default `logs`):
 
-`{datetime} {uid|System} {LEVEL} {action} {message and fields}`
+- `{file_dir}/yyyymmdd.log` — compact text: `{datetime} {uid|System} {LEVEL} {action} {message and fields}`
+- `{file_dir}/yyyymmdd_detail.log` — the same JSON lines as the console (slog), plus Gin access / GORM lines that share that sink
+
+Writes are queued asynchronously so conversion workers do not wait on the console or `fsync`. Lines are never dropped. After each line is written to the sink it is removed from the in-memory queue for GC. If disk or the console falls behind, logs sit in RAM (stderr warns around 16384 lines). Unflushed volume above `converter.log_backlog_max_mb` degrades convert concurrency (see §6 capacity planning). Remaining lines are flushed on shutdown.
 
 `flush_interval` controls buffered flush; the process forces Sync on exit. Background logs without request Context use actor `System`; missing `action` becomes `-`.
 
@@ -631,6 +640,25 @@ curl -s -X POST http://127.0.0.1:8080/api/admin/users/u1/reset-token \
   -H "X-UID: admin" -H "X-Token: <admin_api_token>"
 ```
 
+### 5.4.1 Performance overview (admin)
+
+Web: **Admin → Performance** (`/admin/perf`). The service writes `pressure_sample` every `cleanup.metrics_interval` (default 10s) and deletes rows older than `cleanup.metrics_ttl` (default 7 days).
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/admin/metrics` | Live snapshot (queue counts, worker slots, log backlog, heap/RAM/disk, `degrade_reason`, `limits`) |
+| GET | `/api/admin/metrics/history?range=` | History points. `range`=`1h` (raw) \| `24h` (per-minute max) \| `7d` (5-minute max) |
+
+```bash
+curl -s http://127.0.0.1:8080/api/admin/metrics \
+  -H "X-UID: admin" -H "X-Token: <admin_api_token>"
+
+curl -s "http://127.0.0.1:8080/api/admin/metrics/history?range=1h" \
+  -H "X-UID: admin" -H "X-Token: <admin_api_token>"
+```
+
+Invalid `range` → 400 `code=40001`. Non-admin → 403.
+
 ---
 
 ### 5.5 Upload
@@ -842,10 +870,10 @@ curl -s -o "./out-$FILEID.pdf" "$BASE/api/pdf/$FILEID/download" \
 
 | Topic | Notes |
 |-------|-------|
-| Conversion queue | `converter.worker_count` / `queue_size` / `office_timeout` / `requeue_interval` / `retry_count` / `retry_interval` / `excel_page_fit` / `com_mode` / `temp_sandbox` / `engines` / `ext_engines` / `openoffice` |
+| Conversion queue | `converter.worker_count` / `min_workers` / `mem_limit_mb` / `disk_min_free_mb` / `log_backlog_max_mb` / `queue_size` / `office_timeout` / `requeue_interval` / `retry_count` / `retry_interval` / `excel_page_fit` / `com_mode` / `temp_sandbox` / `engines` / `ext_engines` / `openoffice` |
 | Status SSE | `server.sse.max_duration` / `heartbeat_interval` / `poll_interval` / `max_fileids`; endpoint `GET /api/pdf/events` (see §5.6) |
 | PDF watermark | `watermark.text` / `angle` / `density` / `opacity` / `color` / `font_size` / `font_path`; upload form secondary field `watermark` |
-| TTL cleanup | `cleanup.history_ttl_enabled` / `history_ttl` / `history_ttl_delete_row` / `pdf_ttl` / `interval`; one run at startup; terminal uploads use immediate `ArchiveUpload` (**not** `upload_ttl`); user deletes go to `trash/`, **no** trash TTL |
+| TTL cleanup | `cleanup.history_ttl_enabled` / `history_ttl` / `history_ttl_delete_row` / `pdf_ttl` / `interval` / `metrics_interval` / `metrics_ttl`; one run at startup; terminal uploads use immediate `ArchiveUpload` (**not** `upload_ttl`); user deletes go to `trash/`, **no** trash TTL |
 | Account freeze | `user.status`: `0` active, `1` frozen |
 | Windows service | Not built-in yet; for production, host the foreground process with Task Scheduler / nssm / etc., and configure DCOM Identity |
 
@@ -872,7 +900,23 @@ curl -s -o "./out-$FILEID.pdf" "$BASE/api/pdf/$FILEID/download" \
 - `converter.retry_count` / `retry_interval`: extra retries after conversion failure; password errors (`ERR_DOC_PASSWORD_REQUIRED` / `ERR_DOC_PASSWORD_WRONG`) skip retry and archive immediately. On other exhaustion, archive with `ERR_RETRY_LIMIT_EXCEEDED`
 - `converter.temp_sandbox`: per-task isolated `TEMP`/`TMP` (prefix `msoffice2pdf-com-`) to isolate Office temp / `~$` files; `subprocess` injects via `cmd.Env`, inherited by `convert-worker`. With `inprocess`, requires `worker_count=1`; COM engines only
 - Orphan sweep: on service start, clean leftover `convert-worker` processes, process images for **enabled** engines (including `openoffice` `soffice.exe` / `soffice.bin` / `soffice`), and all `msoffice2pdf-com-*` TEMP dirs; while running, on each `requeue_interval`, kill `convert-worker` processes older than `office_timeout + 2m` (matched by command line containing `convert-worker`, not the main service), and remove stale TEMP sandboxes under the same grace; if any worker was killed this round or there is currently no `convert-worker`, also clear Office/WPS/soffice images for enabled engines
-- **Concurrency cap:** concurrent `convert-worker` count is capped by `converter.worker_count` (each Worker runs one Convert at a time; HTTP load does not unboundedly spawn children); `openoffice` runs inside the Worker and is not limited by `convert-worker` count
+- **Concurrency cap:** concurrent converts are capped by `converter.worker_count` (each Worker runs one Convert at a time; HTTP load does not unboundedly spawn children). `openoffice` runs inside the Worker and still occupies a Worker slot. Under resource pressure the cap drops to `min_workers` (see below)
+
+### 6.1 Sizing convert concurrency, RAM, and disk
+
+Size for **peak concurrent converts**, not just the Go process RSS. Each COM task is roughly 0.5–1.5GB child RSS, and disk holds the source plus PDF at once (~`2 × upload.max_size`).
+
+| Key | Guidance |
+|-----|----------|
+| `worker_count` | Max concurrent converts. Suggest `≤ min(CPU cores, RAM_GB / 2)`; **4** is typical on ≥8GB Office hosts |
+| `min_workers` | Degrade floor; default **1** so conversion can still proceed |
+| `mem_limit_mb` | Go-heap tripwire. `0` = 50% of physical RAM, at least 512MiB. Does not include Office children |
+| `disk_min_free_mb` | Watches `storage.*` and `log.file_dir`. Default **1024**. Suggest `≥ worker_count × max_size × 2` plus log headroom |
+| `log_backlog_max_mb` | Max unflushed log RAM. Default **32** |
+
+**Runtime:** every ~2s the process checks unflushed logs, Go heap, available RAM (&lt;256MiB), and free space on the watched dirs. Any tripwire immediately sets concurrency to `min_workers`; when healthy it adds 1 per tick up to `worker_count`. Queued jobs are not dropped. Degrade logs Warn (`reason` = `log_backlog` / `heap` / `ram` / `disk`); restore logs Info.
+
+**Log RAM:** console and daily files are async, never drop lines, and never block Workers. Each line is freed from memory as soon as it is written to the sink. Do not use blocking log I/O to “save RAM” — that stalls conversion.
 
 ---
 

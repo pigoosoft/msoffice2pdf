@@ -12,6 +12,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 
+	"msoffice2pdf/internal/applog"
 	"msoffice2pdf/internal/config"
 	"msoffice2pdf/internal/handlers"
 	"msoffice2pdf/internal/middleware"
@@ -26,6 +27,7 @@ type Deps struct {
 	Queue       *queue.Queue
 	Cleanup     *service.CleanupService
 	HistoryRepo *repo.UploadHistoryRepo
+	SampleRepo  *repo.PressureSampleRepo
 }
 
 type Server struct {
@@ -39,6 +41,8 @@ func New(d Deps) *Server {
 	gdb := d.DB
 
 	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = applog.ConsoleWriter()
+	gin.DefaultErrorWriter = applog.ConsoleWriter()
 	r := gin.New()
 	r.Use(gin.Recovery())
 	r.Use(gin.Logger())
@@ -163,6 +167,19 @@ func New(d Deps) *Server {
 	{
 		adminHistory.GET("/uploads", historyHandler.UploadsAdmin)
 		adminHistory.GET("/pdflogs", historyHandler.PdfLogsAdmin)
+	}
+
+	metricsHandler := &handlers.AdminMetricsHandler{
+		Queue:   d.Queue,
+		Uploads: uploadRepo,
+		Samples: d.SampleRepo,
+		Conv:    cfg.Converter,
+	}
+	adminMetrics := r.Group("/api/admin/metrics")
+	adminMetrics.Use(apiAuth, middleware.AdminRequired())
+	{
+		adminMetrics.GET("", metricsHandler.Current)
+		adminMetrics.GET("/history", metricsHandler.History)
 	}
 
 	addr := fmt.Sprintf(":%d", cfg.Server.Port)
