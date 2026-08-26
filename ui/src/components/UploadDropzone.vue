@@ -22,16 +22,12 @@ const hint = computed(() => {
   if (error.value) return error.value
   if (!loaded.value) return t('upload.limitsNotLoaded')
   if (!restrictExts.value) return t('upload.serverValidatesExt')
-  const sample = allowedExts.value
-    .map((e) => e.replace(/^\./, ''))
-    .slice(0, 8)
-    .join(' / ')
-  const more = allowedExts.value.length > 8 ? t('upload.moreExts') : ''
+  const sample = allowedExts.value.join(' / ')
   const sizeHint =
     maxSize.value > 0
       ? t('upload.maxMb', { mb: Math.round(maxSize.value / (1024 * 1024)) })
       : ''
-  return t('upload.limitsHint', { sample, more, sizeHint })
+  return t('upload.limitsHint', { sample, sizeHint })
 })
 
 function extOf(name: string): string {
@@ -108,8 +104,13 @@ defineExpose({ clear })
 </template>
 
 <style scoped>
+:deep(.el-upload-dragger) {
+  height: auto;
+  padding: 24px 16px;
+}
+
 .drop-inner {
-  padding: 12px 8px;
+  padding: 0;
 }
 
 .drop-title {
@@ -121,6 +122,9 @@ defineExpose({ clear })
 .drop-hint {
   margin: 0;
   font-size: 12px;
+  line-height: 1.65;
   color: var(--el-text-color-secondary);
+  white-space: normal;
+  word-break: break-word;
 }
 </style>
