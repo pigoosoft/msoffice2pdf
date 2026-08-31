@@ -36,7 +36,7 @@ const (
 	langOptionZH = "ZH"
 )
 
-func runFyne(cfg *config.Config, configPath string, ring *applog.Ring, rt *appruntime.Runtime) (err error) {
+func runFyne(cfg *config.Config, configPath string, ring *applog.Ring, rt *appruntime.Runtime, autoStart bool) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			err = fmt.Errorf("desktop ui panic: %v", r)
@@ -152,7 +152,7 @@ func runFyne(cfg *config.Config, configPath string, ring *applog.Ring, rt *appru
 		}
 	}
 
-	startBtn.OnTapped = func() {
+	doStart := func() {
 		if busy {
 			return
 		}
@@ -170,6 +170,7 @@ func runFyne(cfg *config.Config, configPath string, ring *applog.Ring, rt *appru
 			})
 		}()
 	}
+	startBtn.OnTapped = doStart
 
 	stopBtn.OnTapped = func() {
 		if busy {
@@ -284,6 +285,10 @@ func runFyne(cfg *config.Config, configPath string, ring *applog.Ring, rt *appru
 	w.SetContent(content)
 
 	updateButtons()
+	if autoStart {
+		slog.Info("auto-starting runtime via --start")
+		doStart()
+	}
 
 	done := make(chan struct{})
 	var closeOnce sync.Once

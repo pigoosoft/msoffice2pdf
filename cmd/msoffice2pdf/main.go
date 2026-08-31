@@ -20,7 +20,7 @@ import (
 )
 
 func main() {
-	configPath, noui, args := parseGlobalConfig(os.Args[1:])
+	configPath, noui, autoStart, args := parseGlobalConfig(os.Args[1:])
 
 	if len(args) >= 1 && isHelpCommand(args[0]) {
 		consoleattach.EnsureCLI()
@@ -29,7 +29,7 @@ func main() {
 	}
 
 	if len(args) == 0 || args[0] == "serve" {
-		runServe(configPath, noui)
+		runServe(configPath, noui, autoStart)
 		return
 	}
 
@@ -108,7 +108,7 @@ func exitError(format string, args ...any) {
 	os.Exit(1)
 }
 
-func runServe(configPath string, noui bool) {
+func runServe(configPath string, noui, autoStart bool) {
 	cfg, err := config.Load(configPath)
 	if err != nil {
 		exitError("error: load config failed: %v", err)
@@ -152,7 +152,7 @@ func runServe(configPath string, noui bool) {
 
 	rt := appruntime.New(cfg)
 	consoleattach.DetachForUI()
-	if err := desktop.Run(cfg, configPath, ring, rt); err != nil {
+	if err := desktop.Run(cfg, configPath, ring, rt, autoStart); err != nil {
 		consoleattach.EnsureCLI()
 		slog.Error("desktop ui failed; falling back to console", "err", err)
 		runRuntimeUntilSignal(rt)
@@ -190,7 +190,7 @@ func runRuntimeUntilSignal(rt *appruntime.Runtime) {
 	}
 }
 
-func parseGlobalConfig(args []string) (configPath string, noui bool, remaining []string) {
+func parseGlobalConfig(args []string) (configPath string, noui, autoStart bool, remaining []string) {
 	configPath = "config/config.yaml"
 	remaining = make([]string, 0, len(args))
 	for i := 0; i < len(args); i++ {
@@ -208,9 +208,13 @@ func parseGlobalConfig(args []string) (configPath string, noui bool, remaining [
 			noui = true
 			continue
 		}
+		if arg == "--start" {
+			autoStart = true
+			continue
+		}
 		remaining = append(remaining, arg)
 	}
-	return configPath, noui, remaining
+	return configPath, noui, autoStart, remaining
 }
 
 func printHelp(w *os.File) {
@@ -224,12 +228,14 @@ Usage:
 Global flags:
   --config=PATH, --config PATH   Config file (default: config/config.yaml)
   --noui                         Skip desktop shell; start serve in console mode
+  --start                        In desktop shell, start HTTP + workers without clicking Start
   -h, --help, help               Show this help
   -v, --version, version         Show version and copyright
 
 Commands:
   (none) / serve                 Start the service (desktop shell by default on Windows /
-                                 Linux with DISPLAY; use --noui for console)
+                                 Linux with DISPLAY; use --noui for console, --start to
+                                 auto-start inside the shell)
   help                           Show this help
   version                        Show version and copyright
   user create-admin              Create an admin user
@@ -249,6 +255,7 @@ Commands:
 
 Examples:
   msoffice2pdf
+  msoffice2pdf --start
   msoffice2pdf --noui --config config/config.yaml
   msoffice2pdf serve --noui
   msoffice2pdf version

@@ -84,7 +84,7 @@ Then create an admin (same exe; still no Go):
 
 Health check: `curl -i http://127.0.0.1:8080/health` (port from `server.port`).
 
-Without `--noui` on Windows, a **desktop control window** opens; HTTP does not listen until you click **Start**. Logs appear in that window, not necessarily in the terminal.
+Without `--noui` on Windows, a **desktop control window** opens; HTTP does not listen until you click **Start** (or pass **`--start`** to start automatically). Logs appear in that window, not necessarily in the terminal.
 
 Only **one** serve process is allowed per machine. If the configured port is already in use, startup fails.
 
@@ -279,7 +279,7 @@ Finish §2.1–2.2 (database and `config/config.yaml`) before starting. For prod
 
 ### Desktop control shell (default)
 
-By default on **Windows**, on **Linux when `DISPLAY` is set**, and on **macOS**, starting `serve` (or no subcommand) opens a **desktop control shell** instead of starting HTTP immediately. Click **Start** to run HTTP + conversion workers + cleanup; **Stop** or close the window to shut down. The window shows filtered live logs from the service.
+By default on **Windows**, on **Linux when `DISPLAY` is set**, and on **macOS**, starting `serve` (or no subcommand) opens a **desktop control shell** instead of starting HTTP immediately. Click **Start** (or pass **`--start`**) to run HTTP + conversion workers + cleanup; **Stop** or close the window to shut down. The window shows filtered live logs from the service.
 
 UI mode is **not** tied to a console/terminal: Windows release builds use `-H windowsgui` (no black console); on Linux/macOS the process detaches from the launching TTY so closing that terminal does not stop the service. Logs stay in the log file and the shell log pane.
 
@@ -287,7 +287,7 @@ Only **one** `serve` / default-start process may run on the machine (**Windows /
 
 | Mode | How | Behavior |
 |------|-----|----------|
-| Desktop shell | default on Windows / Linux+X / macOS | Service **stopped** until you click Start; not killed by closing the launch terminal |
+| Desktop shell | default on Windows / Linux+X / macOS | Service **stopped** until you click Start (or pass `--start`); not killed by closing the launch terminal |
 | Console | `--noui` | Same as pre-shell behavior: service starts immediately; uses the terminal |
 
 Use **`--noui`** for SSH, headless Linux (no X), Task Scheduler / nssm wrappers, or any host without a display:
@@ -319,6 +319,9 @@ Use the executable from §2.3. By default it loads `config/config.yaml` under th
 # default config (same as serve)
 .\bin\msoffice2pdf.exe
 
+# desktop shell: open window and start HTTP + workers immediately
+.\bin\msoffice2pdf.exe --start
+
 # explicit serve / config path
 .\bin\msoffice2pdf.exe serve --config=config/config.yaml
 .\bin\msoffice2pdf.exe --config config/config.yaml
@@ -332,7 +335,7 @@ Use the executable from §2.3. By default it loads `config/config.yaml` under th
 ./bin/msoffice2pdf --config config/config.yaml
 ```
 
-In **desktop shell** mode (default on Windows / Linux+X), the process only loads config and opens the window until you click **Start**. In **console** mode (`--noui`, or Linux without `DISPLAY`), on start the process connects to the database, ensures storage dirs, starts the conversion queue and Cleanup timer, and listens for HTTP. When listening begins, besides `addr` in JSON logs (e.g. `:8080`), it prints each local IPv4 URL to the console (shell log pane and/or stdout), for example:
+In **desktop shell** mode (default on Windows / Linux+X), the process only loads config and opens the window until you click **Start**, unless you pass **`--start`** (same as clicking Start). In **console** mode (`--noui`, or Linux without `DISPLAY`), on start the process connects to the database, ensures storage dirs, starts the conversion queue and Cleanup timer, and listens for HTTP. When listening begins, besides `addr` in JSON logs (e.g. `:8080`), it prints each local IPv4 URL to the console (shell log pane and/or stdout), for example:
 
 ```text
 http://127.0.0.1:8080
@@ -441,14 +444,15 @@ Global flags:
 |------|-------------|
 | `--config=PATH` or `--config PATH` | Config file; default `config/config.yaml` |
 | `--noui` | Skip desktop shell; start HTTP + workers immediately (console mode) |
+| `--start` | In desktop shell, start HTTP + workers without clicking Start (ignored with `--noui`) |
 | `-h` / `--help` / `help` | Print all CLI commands |
 | `-v` / `--version` / `version` | Print app name, version, and copyright |
 
 ### 4.1 Command overview
 
 ```text
-msoffice2pdf [--config=PATH] [--noui]
-msoffice2pdf serve [--config=PATH] [--noui]
+msoffice2pdf [--config=PATH] [--noui] [--start]
+msoffice2pdf serve [--config=PATH] [--noui] [--start]
 msoffice2pdf help
 msoffice2pdf version
 msoffice2pdf user create-admin --uid=UID --pwd=PWD [--config=PATH]

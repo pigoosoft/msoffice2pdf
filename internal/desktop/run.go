@@ -6,8 +6,8 @@ import (
 	"msoffice2pdf/internal/config"
 )
 
-// Run blocks until the window closes. Runtime starts stopped.
+// Run blocks until the window closes. Runtime starts stopped unless autoStart.
 // On window close, Stop is invoked if the runtime is still active.
-func Run(cfg *config.Config, configPath string, ring *applog.Ring, rt *appruntime.Runtime) error {
-	return runFyne(cfg, configPath, ring, rt)
+func Run(cfg *config.Config, configPath string, ring *applog.Ring, rt *appruntime.Runtime, autoStart bool) error {
+	return runFyne(cfg, configPath, ring, rt, autoStart)
 }

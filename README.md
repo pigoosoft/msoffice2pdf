@@ -57,7 +57,7 @@ On **Windows**, the desktop shell (Fyne) needs **CGO**, a **matching `GOARCH`**,
 GOARCH=amd64 CGO_ENABLED=1 go build -ldflags="-H windowsgui" -o bin/msoffice2pdf.exe ./cmd/msoffice2pdf
 ```
 
-By default on **Windows** (and on **Linux when `DISPLAY` is set** / **macOS**), the process opens a **desktop control shell**. Click **Start** to run HTTP + conversion workers. Closing the launching terminal does not stop the UI process. Use **`--noui`** for classic console mode (starts immediately; suitable for SSH/service wrappers):
+By default on **Windows** (and on **Linux when `DISPLAY` is set** / **macOS**), the process opens a **desktop control shell**. Click **Start** to run HTTP + conversion workers, or pass **`--start`** to start automatically. Closing the launching terminal does not stop the UI process. Use **`--noui`** for classic console mode (starts immediately; suitable for SSH/service wrappers):
 
 ```bash
 ./bin/msoffice2pdf --noui --config config/config.yaml
@@ -65,7 +65,7 @@ By default on **Windows** (and on **Linux when `DISPLAY` is set** / **macOS**), 
 
 Only one serve instance is allowed per machine (Windows / Linux / macOS); a second launch exits with an error. Startup also fails if `server.port` is already in use.
 
-5. After the service is running (click **Start** in the desktop shell, or use `--noui`), health-check: `curl -i http://127.0.0.1:8080/health`
+5. After the service is running (click **Start** in the desktop shell, pass `--start`, or use `--noui`), health-check: `curl -i http://127.0.0.1:8080/health`
 
 ### Create MySQL database
 

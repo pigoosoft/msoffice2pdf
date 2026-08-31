@@ -64,7 +64,7 @@
 
 健康检查：`curl -i http://127.0.0.1:8080/health`（端口见 `server.port`）。
 
-Windows 上不加 `--noui` 会打开 **桌面控制窗口**，要点 **Start** 才会监听 HTTP；日志在窗口里，不一定出现在 PowerShell。
+Windows 上不加 `--noui` 会打开 **桌面控制窗口**，要点 **Start** 才会监听 HTTP（加 **`--start`** 则打开窗口后自动启动）；日志在窗口里，不一定出现在 PowerShell。
 
 每台机器只允许 **一个** serve 进程；`server.port` 已被占用时启动失败。
 
